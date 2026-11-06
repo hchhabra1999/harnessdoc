@@ -138,5 +138,119 @@ def _print_scan(result) -> None:
             typer.echo("         " + " · ".join(extras))
 
 
+@app.command()
+def measure(
+    logs: list[Path] = typer.Argument(..., exists=True, help="Usage log files or folders (JSONL/JSON/OTLP, .gz ok)"),
+    outcomes: Path | None = typer.Option(None, exists=True, help="Extra outcomes file (CSV task_id,success or JSONL)"),
+    scan_path: Path | None = typer.Option(None, "--scan", exists=True, file_okay=False,
+                                          help="Also scan this project and price each finding with measured usage"),
+    task_key: str | None = typer.Option(None, help="Field that groups requests into tasks (default: task_id, …)"),
+    site_key: str | None = typer.Option(None, help="Field naming the call site (default: site, function, …)"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    pricing: Path | None = PricingOpt,
+):
+    """Measure spend, cache hit rate and cost per successful task from usage logs."""
+    from .measure import combined_saving, measure_findings
+    from .usage import load_logs, load_outcomes_file
+    from .usage.analyze import baseline
+
+    book = PriceBook.load(pricing if pricing else scan_path)
+    loaded = load_logs(list(logs), task_key, site_key)
+    extra = load_outcomes_file(outcomes, task_key or "task_id") if outcomes else []
+    base = baseline(loaded.records, loaded.outcomes + extra, book)
+
+    measured = None
+    if scan_path:
+        from .scan import scan_project
+
+        measured = measure_findings(scan_project(scan_path, book), base, book)
+
+    if as_json:
+        data = {"baseline": base.as_dict(), "load": {"files": loaded.files, "errors": loaded.errors,
+                                                     "error_count": loaded.error_count,
+                                                     "lines_without_usage": loaded.lines_without_usage}}
+        if measured is not None:
+            window, month = combined_saving(measured)
+            data["findings"] = [m.as_dict() for m in measured]
+            data["combined_saving"] = {"window": window, "month": month}
+        typer.echo(json.dumps(data, indent=2, sort_keys=True, default=str))
+        return
+    _print_measure(base, loaded, measured)
+
+
+def _money(x: float | None, digits: int = 2) -> str:
+    return "—" if x is None else f"${x:,.{digits}f}"
+
+
+def _print_measure(base, loaded, measured) -> None:
+    from .measure import combined_saving
+
+    if loaded.error_count:
+        typer.echo(f"! {loaded.error_count} unreadable lines/files, e.g. {loaded.errors[0]}")
+    if not base.requests:
+        typer.echo("No LLM usage found in the logs.")
+        return
+    f = base.monthly_factor
+    span = (f"over {base.window_days:.1f} days ({base.window_start:%Y-%m-%d} → {base.window_end:%Y-%m-%d})"
+            if base.window_days is not None else "(no timestamps)")
+    month = f" · ~{_money(base.total.cost * f)} / month" if f else ""
+    typer.echo(f"{base.requests:,} LLM requests {span} · {_money(base.total.cost)} total{month}")
+    hit = base.total.tokens.cache_hit_rate
+    typer.echo(f"Cache hit rate (share of input tokens read from cache): {hit:.1%}" if hit is not None else "")
+    if base.unpriced_models:
+        names = ", ".join(f"{k} ({v})" for k, v in base.unpriced_models.items())
+        typer.echo(f"! Not priced (add to harnessdoc.pricing.json): {names}")
+
+    typer.echo("")
+    if base.tasks_with_outcome:
+        sr = base.success_rate
+        typer.echo(f"Tasks with an outcome: {base.tasks_with_outcome:,} · succeeded {base.successes:,} "
+                   f"({sr.value:.1%}, 95% CI {sr.low:.1%}–{sr.high:.1%})")
+        cps = base.cost_per_success
+        if cps:
+            typer.echo(f"Cost per successful task: {_money(cps.value, 4)}  (95% CI {_money(cps.low, 4)}–"
+                       f"{_money(cps.high, 4)})")
+        typer.echo(f"Cost per task: mean {_money(base.cost_per_task_mean, 4)} · median "
+                   f"{_money(base.cost_per_task_median, 4)} · p90 {_money(base.cost_per_task_p90, 4)}")
+        if base.requests_without_outcome:
+            share = base.cost_without_outcome / base.total.cost if base.total.cost else 0
+            typer.echo(f"Not in the per-task figures: {base.requests_without_outcome:,} requests without a task "
+                       f"outcome, {_money(base.cost_without_outcome)} ({share:.0%} of spend) — e.g. batch jobs")
+    else:
+        typer.echo("No task outcomes in the logs, so cost per *successful* task can't be computed. Log outcomes "
+                   "with UsageLogger.outcome(task_id, success) or pass --outcomes.")
+
+    def table(title: str, groups: dict) -> None:
+        typer.echo(f"\n{title}")
+        for key, g in sorted(groups.items(), key=lambda kv: -kv[1].cost):
+            share = g.cost / base.total.cost if base.total.cost else 0
+            hit = g.tokens.cache_hit_rate
+            typer.echo(f"  {key:<30} {g.requests:>7,} req  {_money(g.cost):>10}  {share:>5.0%}  "
+                       f"cache hit {hit:.0%}" if hit is not None else f"  {key:<30} {g.requests:>7,} req")
+
+    table("By model", base.by_model)
+    table("By call site (as labelled in the logs)", base.by_site)
+
+    if measured is None:
+        return
+    typer.echo("\nFindings priced with measured usage" + (" ($ per month)" if f else " ($ in log window)"))
+    for m in measured:
+        if not (m.saving or m.finding.rule in ("HD001", "HD003")):
+            continue
+        amount = m.saving_month if f else m.saving
+        value = _money(amount) if amount else "  (enabler)"
+        typer.echo(f"  {value:>12}  {m.finding.rule}  {m.finding.file}:{m.finding.line}  {m.finding.title}")
+        typer.echo(f"                {m.basis}")
+    window, month = combined_saving(measured)
+    total = month if f and month is not None else window
+    typer.echo(f"\n  Combined potential: {_money(total)}{' / month' if f else ''} "
+               "(overlapping savings on the same call site combined, not added). Estimates until a "
+               "before/after run proves them.")
+    unmatched = [m for m in measured if m.site_key is None and m.finding.rule != "HD010"]
+    if unmatched:
+        typer.echo(f"  {len(unmatched)} findings had no matching usage in the logs (label requests with "
+                   "site=<function name> to price them).")
+
+
 if __name__ == "__main__":
     app()
