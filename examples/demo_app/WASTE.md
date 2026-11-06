@@ -16,7 +16,7 @@ Do not "fix" the app — fixes go in a copy during before/after demos.
 | W08 | `acme_support/extract.py:9` | replace with code | LLM call to find a string matching `ORD-\d{6}` | Regex; call the LLM only if the regex finds nothing (or never) | No |
 | W09 | `jobs/nightly_summary.py:10-11` | batch | Non-interactive nightly job calls the real-time API once per ticket in a loop | Batch API (~50% off) | No |
 | W10 | `jobs/nightly_summary.py:12` | model choice | Premium model (`gpt-6-astra`, $10/$50) for two-sentence dashboard summaries | Cheaper tier — but **write a guard eval first** | No |
-| W11 | repo-wide | eval coverage | 5 LLM call sites, 1 covered by an eval (router). Agent, extraction and summaries have no quality guard, so no cost change to them can be proven safe | Generate guard evals for uncovered call sites before changing them | — |
+| W11 | repo-wide | eval coverage | 4 LLM call sites, 1 covered by an eval (router). Agent, extraction and summaries have no quality guard, so no cost change to them can be proven safe | Generate guard evals for uncovered call sites before changing them | — |
 
 **Not waste (should NOT be flagged):** the policy prompt length itself (it is needed and cacheable), the
 `stop_reason` check in the agent loop, and the router's validation of the returned label.

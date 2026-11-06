@@ -73,5 +73,70 @@ def cost(
     typer.echo(f"  {'total':<15} ${c.total:,.6f}")
 
 
+SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+@app.command()
+def scan(
+    path: Path = typer.Argument(Path("."), exists=True, file_okay=False, help="Project root to scan"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output (stable ordering)"),
+    fail_on: str = typer.Option("none", help="Exit 1 if any finding is at or above: high|medium|low|info|none"),
+    pricing: Path | None = PricingOpt,
+):
+    """Statically scan a Python project for LLM call sites, harness waste and eval coverage."""
+    from .scan import scan_project
+
+    if fail_on not in (*SEVERITY_ORDER, "none"):
+        raise typer.BadParameter("--fail-on must be one of high, medium, low, info, none")
+    book = PriceBook.load(pricing if pricing else path)
+    result = scan_project(path, book)
+
+    if as_json:
+        data = result.as_dict()
+        data["root"] = str(path)  # keep output portable across machines
+        typer.echo(json.dumps(data, indent=2, sort_keys=True))
+    else:
+        _print_scan(result)
+
+    if fail_on != "none" and any(SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[fail_on] for f in result.findings):
+        raise typer.Exit(1)
+
+
+def _print_scan(result) -> None:
+    sites = [s for s in result.call_sites if not s.is_test_file]
+    covered = sum(1 for s in sites if result.coverage.get(s.id))
+    typer.echo(f"Scanned {result.files_scanned} Python files · {len(sites)} LLM call sites · "
+               f"{covered} covered by an eval")
+    for err in result.errors:
+        typer.echo(f"  ! could not parse {err}")
+
+    if sites:
+        typer.echo("\nCall sites")
+        for s in sites:
+            model = s.model.value if s.model.kind == "literal" else f"({s.model.kind})"
+            system = f"~{s.system.tokens}-token system" if s.system.tokens else ""
+            guard = "eval: " + ", ".join(result.coverage[s.id]) if result.coverage.get(s.id) else "no eval"
+            typer.echo(f"  {s.id:<34} {s.provider:<9} {model:<18} {s.function or '-':<24} {system:<20} {guard}")
+
+    if not result.findings:
+        typer.echo("\nNo findings.")
+        return
+    counts = {sev: sum(1 for f in result.findings if f.severity == sev) for sev in SEVERITY_ORDER}
+    summary = " · ".join(f"{n} {sev}" for sev, n in counts.items() if n)
+    typer.echo(f"\nFindings ({len(result.findings)}: {summary})")
+    ordered = sorted(result.findings, key=lambda f: (-SEVERITY_ORDER[f.severity], f.file, f.line, f.rule))
+    for f in ordered:
+        typer.echo(f"\n  {f.severity.upper():<6} {f.rule}  {f.file}:{f.line}  {f.title}")
+        typer.echo(f"         {f.evidence}")
+        typer.echo(f"         → {f.recommendation}")
+        extras = []
+        if f.est_saving:
+            extras.append(f"est. saving: {f.est_saving}")
+        if f.category != "coverage":
+            extras.append("guard: " + (", ".join(f.guard) if f.guard else "none"))
+        if extras:
+            typer.echo("         " + " · ".join(extras))
+
+
 if __name__ == "__main__":
     app()

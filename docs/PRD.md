@@ -26,7 +26,7 @@ $ harnessdoc review .          # or /harnessdoc in Claude Code, or the MCP tool 
 Goal: support bot · success = ticket resolved without human · 40K conversations/month
 
 Baseline (from logs, 7 days)      $0.042 per successful task   (n=3,912, 95% CI ±$0.002)
-Call sites                         5 found · 1 covered by an eval
+Call sites                         4 found · 1 covered by an eval
 
  #  Finding                                         Where                       Est. saving   Guard
  1  Timestamp at start of system prompt busts cache acme_support/agent.py:15    −31% $/task   none → write one
