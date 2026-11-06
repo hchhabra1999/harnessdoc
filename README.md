@@ -106,8 +106,27 @@ It is the only part of harnessdoc that costs money, so:
 - variants are interleaved case by case, so drift doesn't favour one of them; prompts and outputs are never
   written to disk.
 
-The demo app ships one: [`harnessdoc.experiment.yaml`](examples/demo_app/harnessdoc.experiment.yaml) tests
-the intent router on Haiku against its 24 labelled cases — 72 runs, estimated at about one cent.
+- if a call can't be priced (a model missing from the price book, or a response with no token usage) the run
+  **stops immediately** — a budget can't be enforced on spend it can't see. `--allow-unpriced` overrides it.
+
+The demo app ships two: [`harnessdoc.experiment.yaml`](examples/demo_app/harnessdoc.experiment.yaml) tests
+the intent router on Haiku against its 24 labelled cases (72 runs, about one cent), and
+[`harnessdoc.experiment.minimax.yaml`](examples/demo_app/harnessdoc.experiment.minimax.yaml) runs the same
+question on MiniMax's Anthropic-compatible API (`ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic` plus your
+MiniMax key as `ANTHROPIC_API_KEY`), comparing `MiniMax-M3` with the half-price `MiniMax-M3.1-Flash`.
+
+**First real run** (2026-11-06, MiniMax's API, 72 runs, $0.0023 of a $0.10 cap):
+
+| Variant | Passed | Cost per successful task | Verdict |
+|---|---|---|---|
+| `MiniMax-M3` (baseline) | 22/24 | $0.0000417 | — |
+| `MiniMax-M3.1-Flash` | 23/24 | $0.0000345 (−17%, CI crosses zero) | INCONCLUSIVE — ~118 tasks/window would settle it |
+| Flash, `max_tokens: 16` | 14/24 | $0.0000409 | **REJECT** — success rate −33 pt |
+
+Flash costs half as much per token but always thinks, and those tokens bill as output, so the saving was
+~17% rather than 50%. The 16-token cap broke it: thinking used the cap before the label was written — a
+regression a cost-only comparison would have missed. 24 cases is a small sample; one case's difference between
+the first two rows is noise.
 
 ## CI gate
 

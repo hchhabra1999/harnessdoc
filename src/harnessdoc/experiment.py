@@ -39,7 +39,7 @@ import yaml
 
 from .compare import compare
 from .interceptor import BudgetExceeded, Call, Interceptor, Variant
-from .pricing import PriceBook, UnknownModel
+from .pricing import PriceBook, UnknownModel, fmt_usd
 from .usage.records import Outcome, UsageRecord
 
 CHECKS = ("exact", "normalized", "contains", "regex")
@@ -176,6 +176,7 @@ class ExperimentResult:
     cases: list[CaseResult]
     unpriced_models: list[str] = field(default_factory=list)
     sdk_targets_patched: int = 0
+    stop_reason: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -222,7 +223,10 @@ def import_function(root: Path, call: str) -> Callable:
 
 def run_experiment(spec: Spec, root: str | Path, budget_usd: float, book: PriceBook | None = None,
                    max_cases: int | None = None, progress: Callable[[str], None] | None = None,
-                   targets=None) -> ExperimentResult:
+                   targets=None, allow_unpriced: bool = False) -> ExperimentResult:
+    """Run every case under every variant. Stops (before the next LLM call) when the budget is spent — or,
+    unless `allow_unpriced`, as soon as a call can't be priced (unknown model or no usage in the response),
+    because the budget can't be enforced on spend it can't see."""
     if budget_usd <= 0:
         raise ExperimentError("budget must be a positive dollar amount")
     root = Path(root).resolve()
@@ -237,10 +241,19 @@ def run_experiment(spec: Spec, root: str | Path, budget_usd: float, book: PriceB
     results: list[CaseResult] = []
     per_variant: dict[str, tuple[list[UsageRecord], list[Outcome]]] = {v.name: ([], []) for v in spec.variants}
     patched = 0
+    halt: list[str] = []  # reason to stop before the next call
+    stop_reason = None
 
     def budget_check() -> None:
+        if halt:
+            raise BudgetExceeded(halt[0])
         if spent >= budget_usd:
             raise BudgetExceeded(f"budget ${budget_usd:.2f} reached")
+
+    def unenforceable(why: str) -> None:
+        if not allow_unpriced and not halt:
+            halt.append(f"{why}, so the budget can't be enforced — stopped. Add the price to "
+                        "harnessdoc.pricing.json, or rerun with --allow-unpriced to accept the risk.")
 
     for case in cases:
         for rep in range(spec.repeats):
@@ -251,11 +264,14 @@ def run_experiment(spec: Spec, root: str | Path, budget_usd: float, book: PriceB
                 def on_call(c: Call, calls: list[Call] = calls) -> None:
                     nonlocal spent
                     calls.append(c)
-                    if c.usage is not None:
-                        try:
-                            spent += book.cost(c.model, c.usage).total
-                        except UnknownModel:
-                            unpriced.add(c.model)
+                    if c.usage is None:
+                        unenforceable("a response carried no token usage")
+                        return
+                    try:
+                        spent += book.cost(c.model, c.usage).total
+                    except UnknownModel:
+                        unpriced.add(c.model)
+                        unenforceable(f"model '{c.model}' has no price")
 
                 error = None
                 passed = False
@@ -267,11 +283,14 @@ def run_experiment(spec: Spec, root: str | Path, budget_usd: float, book: PriceB
                         if inspect.isawaitable(out):
                             out = asyncio.run(_await(out))
                         passed = bool(check(out, case["expected"]))
-                except BudgetExceeded:
+                except BudgetExceeded as stop:
                     stopped = True
+                    stop_reason = str(stop)
                 except Exception as e:  # noqa: BLE001 — a crashing case is a failed case, not a crashed run
                     error = f"{e.__class__.__name__}: {str(e)[:200]}"
 
+                if halt and not stopped:  # the call that couldn't be priced was the case's last one
+                    stopped, stop_reason = True, halt[0]
                 if stopped:
                     break
                 cost = 0.0
@@ -288,7 +307,7 @@ def run_experiment(spec: Spec, root: str | Path, budget_usd: float, book: PriceB
                                           sum(1 for c in calls if c.usage is None), error))
                 if progress:
                     progress(f"{variant.name:<12} {case['id']}#{rep}: {'pass' if passed else 'FAIL'} "
-                             f"${cost:.4f}" + (f" ({error})" if error else ""))
+                             f"{fmt_usd(cost, 4)}" + (f" ({error})" if error else ""))
             if stopped:
                 break
         if stopped:
@@ -316,7 +335,7 @@ def run_experiment(spec: Spec, root: str | Path, budget_usd: float, book: PriceB
                                         sum(r.calls for r in rs), sum(r.unmeasured_calls for r in rs),
                                         sum(1 for r in rs if r.error), verdict))
     return ExperimentResult(spec.name, spec.call, budget_usd, spent, stopped, summaries, results,
-                            sorted(unpriced), patched)
+                            sorted(unpriced), patched, stop_reason)
 
 
 async def _await(x):

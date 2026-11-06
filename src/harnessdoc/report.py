@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .goals import Goals, load_goals
 from .measure import MeasuredFinding, combined_saving, measure_findings
-from .pricing import PriceBook
+from .pricing import PriceBook, fmt_usd
 from .scan import ScanResult, scan_project
 from .usage import load_logs, load_outcomes_file
 from .usage.analyze import Baseline, baseline
@@ -67,7 +67,7 @@ def _rel(path: str, root: Path) -> str:
 
 
 def _money(x: float | None, digits: int = 2) -> str:
-    return "—" if x is None else f"${x:,.{digits}f}"
+    return fmt_usd(x, digits)
 
 
 def ranked(a: Analysis) -> list[tuple]:

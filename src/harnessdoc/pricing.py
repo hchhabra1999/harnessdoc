@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -21,6 +22,24 @@ from pathlib import Path
 from typing import Any
 
 PER = 1_000_000
+
+
+def fmt_usd(x: float | None, digits: int = 2, signed: bool = False) -> str:
+    """Format dollars at `digits` decimals, widening to 3 significant digits when that would hide the value.
+
+    LLM calls cost fractions of a cent, so a fixed `$0.0000` turns a real $0.000038 into nothing. Amounts that
+    round cleanly (the usual case) print exactly as `digits` says; only values where rounding would lose more
+    than 5% get extra places. `signed` adds an explicit + or - (for changes).
+    """
+    if x is None or math.isnan(x):
+        return "—"
+    sign = ("-" if x < 0 else "+" if signed else "") if x else ""
+    a = abs(x)
+    places = digits
+    if a and abs(round(a, digits) - a) / a > 0.05:
+        places = min(10, max(digits, 2 - math.floor(math.log10(a))))
+    return f"{sign}${a:,.{places}f}"
+
 
 _PREFIXES = ("anthropic.", "anthropic/", "openai/", "gemini/", "google/", "models/", "vertex_ai/")
 _SUFFIXES = (

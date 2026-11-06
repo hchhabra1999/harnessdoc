@@ -269,3 +269,53 @@ def test_cli_plan_and_refusal_without_confirmation(tmp_path):
                       input="n\n")
     assert r.exit_code == 1 and "costs money" in r.output
     assert not list(root.glob("harnessdoc-experiment-*.json"))
+
+
+# ----------------------------------------------------------------------------- unpriced models stop the run
+
+
+def test_unpriced_model_halts_the_run_because_budget_is_unenforceable(tmp_path):
+    root = project(tmp_path)
+    s = spec(variants={"baseline": {}, "mystery": {"model_overrides": {"claude-opus-5-5": "mystery-model-1"}}})
+    r = run_experiment(s, root, budget_usd=5, targets=FAKE_TARGETS)
+    assert r.stopped_early and "mystery-model-1" in r.stop_reason and "can't be enforced" in r.stop_reason
+    assert r.unpriced_models == ["mystery-model-1"]
+    assert r.variants[0].runs == r.variants[1].runs  # only fully-paired cases are kept
+    assert sum(v.calls for v in r.variants) <= 4  # stopped within the first case, not after 80 runs
+
+
+def test_allow_unpriced_keeps_running(tmp_path):
+    root = project(tmp_path, n_cases=3)
+    s = spec(variants={"baseline": {}, "mystery": {"model_overrides": {"claude-opus-5-5": "mystery-model-1"}}})
+    r = run_experiment(s, root, budget_usd=5, targets=FAKE_TARGETS, allow_unpriced=True)
+    assert not r.stopped_early and r.variants[1].runs == 3 and r.variants[1].cost == 0
+
+
+def test_minimax_models_are_in_the_price_book():
+    from harnessdoc.pricing import PriceBook, Usage
+
+    book = PriceBook.load()
+    assert book.resolve_id("MiniMax-M3") == "minimax-m3"
+    assert book.resolve_id("MiniMax-M3.1-Flash") == "minimax-m3.1-flash"
+    # 400K tokens of each kind in one request stays under the 512K long-context threshold
+    # (a request with 1M input tokens would correctly price at the doubled tier)
+    c = book.cost("MiniMax-M3", Usage(uncached_input=200_000, output=400_000, cache_read=200_000))
+    assert not c.long_context
+    assert c.uncached_input == pytest.approx(0.06) and c.output == pytest.approx(0.48)
+    assert c.cache_read == pytest.approx(0.012)
+    assert book.cost("MiniMax-M3.1-Flash", Usage(uncached_input=1_000_000)).total == 0.15
+    assert book.cost("MiniMax-M3", Usage(uncached_input=512_001)).long_context  # >512K tier
+
+
+def test_minimax_experiment_spec_loads_and_plans(tmp_path):
+    import shutil
+
+    demo = Path(__file__).resolve().parent.parent / "examples" / "demo_app"
+    root = tmp_path / "demo"
+    shutil.copytree(demo, root, ignore=shutil.ignore_patterns("*.jsonl", "__pycache__"))
+    (root / "tests" / "evals").mkdir(parents=True, exist_ok=True)
+    (root / "tests" / "evals" / "classify_intent_cases.jsonl").write_text(
+        (demo / "tests" / "evals" / "classify_intent_cases.jsonl").read_text())
+    s = Spec.load(root / "harnessdoc.experiment.minimax.yaml")
+    assert [v.name for v in s.variants] == ["baseline", "flash", "flash-capped"]
+    assert plan_experiment(s, root).runs == 72

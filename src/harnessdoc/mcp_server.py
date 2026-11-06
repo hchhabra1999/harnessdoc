@@ -330,7 +330,7 @@ def run_experiment(project_path: str, budget_usd: float, user_approved: bool,
     out.write_text(json.dumps(r.as_dict(), indent=2, sort_keys=True, default=str), encoding="utf-8")
     return {
         "spent_usd": r.spent_usd, "budget_usd": r.budget_usd, "stopped_early": r.stopped_early,
-        "sdk_targets_patched": r.sdk_targets_patched, "unpriced_models": r.unpriced_models,
+        "stop_reason": r.stop_reason, "sdk_targets_patched": r.sdk_targets_patched, "unpriced_models": r.unpriced_models,
         "variants": [{"name": v.name, "runs": v.runs, "passed": v.passed, "cost_usd": v.cost, "errors": v.errors,
                       "verdict": v.verdict["verdict"] if v.verdict else "baseline",
                       "reasons": v.verdict["reasons"] if v.verdict else []} for v in r.variants],

@@ -78,6 +78,28 @@
         "gpt-5.4-pro":   { "input": 30.0, "output": 180.0, "cache_read": null, "cache_writes": false, "min_cache_tokens": null }
       }
     },
+    "minimax": {
+      "sources": [
+        "https://platform.minimax.io/docs/guides/pricing-paygo",
+        "https://platform.minimax.io/docs/api-reference/text-anthropic-api"
+      ],
+      "notes": "Standard tier, pay-as-you-go. M3 prices include MiniMax's 'Permanent 50% off'; priority tier is 1.5x and not modelled. Anthropic-compatible endpoint: https://api.minimax.io/anthropic (only these two models).",
+      "caching": {
+        "mode": "cache reads billed; no cache-write price listed",
+        "default_read_multiplier": 0.2,
+        "write_multipliers": {},
+        "usage_fields": { "cache_read": "usage.cache_read_input_tokens", "uncached_input": "usage.input_tokens" }
+      },
+      "batch_multiplier": 1.0,
+      "models": {
+        "minimax-m3": {
+          "input": 0.30, "output": 1.20, "cache_read": 0.06,
+          "long_context": { "threshold_input_tokens": 512000, "input": 0.60, "output": 2.40, "cache_read": 0.12 }
+        },
+        "minimax-m3.1-flash": { "input": 0.15, "output": 0.60, "cache_read": 0.015,
+                                "note": "always thinks: thinking tokens bill as output" }
+      }
+    },
     "gemini": {
       "sources": ["https://aistudio.google.com/docs/pricing", "https://aistudio.google.com/docs/caching"],
       "caching": {

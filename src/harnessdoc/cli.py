@@ -9,7 +9,7 @@ from pathlib import Path
 import typer
 
 from . import __version__
-from .pricing import PriceBook, UnknownModel, Usage
+from .pricing import PriceBook, UnknownModel, Usage, fmt_usd
 
 app = typer.Typer(
     help="harnessdoc — measure what each successful task of your AI app costs, and prove the savings.",
@@ -180,7 +180,7 @@ def measure(
 
 
 def _money(x: float | None, digits: int = 2) -> str:
-    return "—" if x is None else f"${x:,.{digits}f}"
+    return fmt_usd(x, digits)
 
 
 def _print_measure(base, loaded, measured) -> None:
@@ -321,7 +321,7 @@ def _ci(iv, pct: bool = False, digits: int = 4) -> str:
         return "—"
     if pct:
         return f"{iv.value:.1%} ({iv.low:.1%}–{iv.high:.1%})"
-    return f"${iv.value:.{digits}f} (${iv.low:.{digits}f}–${iv.high:.{digits}f})"
+    return f"{fmt_usd(iv.value, digits)} ({fmt_usd(iv.low, digits)}–{fmt_usd(iv.high, digits)})"
 
 
 def _print_compare(c, drop: float, site: str | None) -> None:
@@ -349,7 +349,7 @@ def _print_compare(c, drop: float, site: str | None) -> None:
         typer.echo(f"\nBy call site (spend {unit})")
         for s in c.sites:
             change = f"{(s.after / s.before - 1):+.0%}" if s.before else "new"
-            typer.echo(f"  {s.site:<30} ${s.before:.5f} → ${s.after:.5f}  {change}")
+            typer.echo(f"  {s.site:<30} {fmt_usd(s.before, 5)} → {fmt_usd(s.after, 5)}  {change}")
 
 
 goals_app = typer.Typer(help="Create or show harnessdoc.goals.yaml (what the app is for, what success means).",
@@ -525,7 +525,7 @@ def _print_plan(spec, p) -> None:
     typer.echo(f"  {p.cases} cases × {spec.repeats} repeat(s) × {len(p.variants)} variants = {p.runs} runs "
                f"(baseline: {p.variants[0]}; candidates: {', '.join(p.variants[1:])})")
     if p.est_cost_usd is not None:
-        typer.echo(f"  Estimated cost: ${p.est_cost_usd:.4f} — suggested --budget {p.suggested_budget_usd:.2f}")
+        typer.echo(f"  Estimated cost: {fmt_usd(p.est_cost_usd, 4)} — suggested --budget {p.suggested_budget_usd:.2f}")
     typer.echo(f"  Basis: {p.basis}")
 
 
@@ -538,6 +538,8 @@ def experiment_run(
     out: Path | None = typer.Option(None, help="Results file (default: harnessdoc-experiment-<name>.json)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
     quiet: bool = typer.Option(False, help="Don't print each case"),
+    allow_unpriced: bool = typer.Option(False, "--allow-unpriced",
+                                        help="Keep running when a model has no price (the budget then can't be enforced)"),
 ):
     """Run the experiment with your API keys (from the environment) and print a verdict per variant."""
     from .experiment import ExperimentError, plan_experiment, run_experiment
@@ -555,15 +557,17 @@ def experiment_run(
     if not yes and not typer.confirm("This calls the LLM APIs with your keys and costs money. Run it?"):
         raise typer.Exit(1)
     try:
-        r = run_experiment(spec, project, budget, book, max_cases, None if quiet else (lambda s: typer.echo("  " + s)))
+        r = run_experiment(spec, project, budget, book, max_cases, None if quiet else (lambda s: typer.echo("  " + s)),
+                           allow_unpriced=allow_unpriced)
     except ExperimentError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(2) from None
 
     target = out or project / f"harnessdoc-experiment-{re.sub(r'[^A-Za-z0-9_.-]', '-', spec.name)}.json"
     target.write_text(json.dumps(r.as_dict(), indent=2, sort_keys=True, default=str), encoding="utf-8")
-    typer.echo(f"\nSpent ${r.spent_usd:.4f} of ${r.budget_usd:.2f}" + (" — stopped at the budget" if r.stopped_early
-                                                                    else ""))
+    typer.echo(f"\nSpent {fmt_usd(r.spent_usd, 4)} of ${r.budget_usd:.2f}")
+    if r.stopped_early:
+        typer.echo(f"! Stopped early: {r.stop_reason}")
     if r.sdk_targets_patched == 0:
         typer.echo("! No provider SDK was found to intercept — install your app's SDK in this environment.")
     if r.unpriced_models:
@@ -572,7 +576,7 @@ def experiment_run(
     for v in r.variants:
         verdict = v.verdict["verdict"] if v.verdict else "(baseline)"
         pct = f"{v.passed}/{v.runs}" if v.runs else "—"
-        typer.echo(f"  {v.name:<14} {pct:>9} {'$' + format(v.cost, '.4f'):>10} {v.errors:>7}  {verdict}")
+        typer.echo(f"  {v.name:<14} {pct:>9} {fmt_usd(v.cost, 4):>10} {v.errors:>7}  {verdict}")
     for v in r.variants:
         if v.verdict:
             typer.echo(f"\n{v.name}:")

@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import asdict, dataclass, field
 
-from .pricing import PriceBook
+from .pricing import PriceBook, fmt_usd
 from .usage.analyze import Baseline, Interval, baseline, wilson
 from .usage.records import Outcome, UsageRecord
 
@@ -155,9 +155,9 @@ def compare(before: tuple[list[UsageRecord], list[Outcome]], after: tuple[list[U
             cost = "HIGHER"
         else:
             cost = "NO CLEAR CHANGE"
-        reasons.append(f"Cost per successful task: ${cb.value:.4f} → ${ca.value:.4f} "
-                       f"({(pct or 0) * 100:+.1f}%, 95% CI of the change ${cost_change.low:+.4f} to "
-                       f"${cost_change.high:+.4f}).")
+        reasons.append(f"Cost per successful task: {fmt_usd(cb.value, 4)} → {fmt_usd(ca.value, 4)} "
+                       f"({(pct or 0) * 100:+.1f}%, 95% CI of the change {fmt_usd(cost_change.low, 4, True)} to "
+                       f"{fmt_usd(cost_change.high, 4, True)}).")
 
     # verdict ---------------------------------------------------------------
     if quality == "FAIL" or cost == "HIGHER":

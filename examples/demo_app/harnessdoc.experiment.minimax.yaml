@@ -1,0 +1,24 @@
+# The same router question, run on MiniMax's Anthropic-compatible API (no Anthropic key needed).
+#
+# In YOUR terminal (the key never goes into a chat or a file):
+#   export ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic
+#   export ANTHROPIC_API_KEY=<your MiniMax key>
+#   harnessdoc experiment plan examples/demo_app/harnessdoc.experiment.minimax.yaml --project examples/demo_app
+#   harnessdoc experiment run  examples/demo_app/harnessdoc.experiment.minimax.yaml --project examples/demo_app --budget 0.10
+#
+# The demo app builds its client at import time, so the two variables must be set before you run.
+# The app asks for claude-opus-5-5; the variants swap in MiniMax models (only these two work on that endpoint).
+name: router-on-minimax
+call: acme_support.router:classify_intent
+cases: tests/evals/classify_intent_cases.jsonl
+check: exact
+repeats: 1
+max_success_rate_drop: 2
+variants:
+  baseline:                        # the big model: $0.30 in / $1.20 out per 1M
+    model_overrides: {claude-opus-5-5: MiniMax-M3}
+  flash:                           # half the price; always thinks, so it may be slower / use more output
+    model_overrides: {claude-opus-5-5: MiniMax-M3.1-Flash}
+  flash-capped:                    # tight output cap — expect trouble: thinking tokens count against it
+    model_overrides: {claude-opus-5-5: MiniMax-M3.1-Flash}
+    max_tokens: 16
