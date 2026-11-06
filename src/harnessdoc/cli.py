@@ -252,5 +252,95 @@ def _print_measure(base, loaded, measured) -> None:
                    "site=<function name> to price them).")
 
 
+@app.command()
+def report(
+    path: Path = typer.Argument(Path("."), exists=True, file_okay=False, help="Project root"),
+    logs: list[Path] | None = typer.Option(None, "--logs", exists=True, help="Usage logs (default: goals file)"),
+    outcomes: Path | None = typer.Option(None, exists=True, help="Outcomes file (default: goals file)"),
+    out: Path = typer.Option(Path("harnessdoc-report.md"), "--out", "-o", help="Where to write the report"),
+    stdout: bool = typer.Option(False, "--stdout", help="Print the report instead of writing a file"),
+    pricing: Path | None = PricingOpt,
+):
+    """Write a Markdown report: goal vs baseline, ranked recommendations, eval coverage, method."""
+    from .goals import GoalsError
+    from .report import analyse, build_report
+
+    try:
+        a = analyse(path, logs, outcomes, book=PriceBook.load(pricing if pricing else path))
+    except GoalsError as e:
+        typer.echo(f"harnessdoc.goals.yaml: {e}", err=True)
+        raise typer.Exit(2) from None
+    text = build_report(a)
+    if stdout:
+        typer.echo(text, nl=False)
+        return
+    out.write_text(text, encoding="utf-8")
+    typer.echo(f"Wrote {out} ({len(a.scan.findings)} findings"
+               + (f", {a.base.requests:,} requests measured" if a.base else ", no usage logs") + ")")
+
+
+goals_app = typer.Typer(help="Create or show harnessdoc.goals.yaml (what the app is for, what success means).",
+                        no_args_is_help=True)
+app.add_typer(goals_app, name="goals")
+
+
+@goals_app.command("init")
+def goals_init(
+    path: Path = typer.Argument(Path("."), exists=True, file_okay=False, help="Project root"),
+    app_desc: str = typer.Option(..., "--app", prompt="What does the app do (one sentence)?"),
+    success: str = typer.Option(..., prompt="What counts as a successful task?"),
+    monthly_tasks: int | None = typer.Option(None, help="Tasks per month"),
+    target: float | None = typer.Option(None, help="Target cost per successful task, USD"),
+    max_drop: float = typer.Option(1.0, help="Max success-rate drop a change may cause, percentage points"),
+    task_key: str | None = typer.Option(None, help="Log field that groups requests into tasks"),
+    logs: list[str] | None = typer.Option(None, "--logs", help="Usage log paths, relative to the project"),
+    constraint: list[str] | None = typer.Option(None, "--constraint", help="Repeatable, e.g. 'stay on Anthropic'"),
+    force: bool = typer.Option(False, help="Overwrite an existing goals file"),
+):
+    """Create harnessdoc.goals.yaml (prompts for the two required answers)."""
+    from .goals import Goals, GoalsError, goals_path, save_goals
+
+    target_path = goals_path(path)
+    if target_path.exists() and not force:
+        typer.echo(f"{target_path} already exists (use --force to overwrite).", err=True)
+        raise typer.Exit(1)
+    try:
+        g = Goals(app=app_desc, success=success, monthly_tasks=monthly_tasks, target_cost_per_success=target,
+                  max_success_rate_drop=max_drop, task_key=task_key, logs=list(logs or []),
+                  constraints=list(constraint or []))
+        written = save_goals(g, path)
+    except GoalsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"Wrote {written}")
+
+
+@goals_app.command("show")
+def goals_show(path: Path = typer.Argument(Path("."), exists=True, help="Project root or goals file")):
+    """Validate and print the goals file."""
+    from .goals import GoalsError, load_goals
+
+    try:
+        g = load_goals(path)
+    except GoalsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+    if g is None:
+        typer.echo("No harnessdoc.goals.yaml here. Create one with `harnessdoc goals init`.")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(g.as_dict(), indent=2))
+
+
+@app.command()
+def mcp():
+    """Run the harnessdoc MCP server on stdio (for Claude Code, Cursor, Codex, …)."""
+    try:
+        from .mcp_server import server
+    except ImportError as e:
+        typer.echo(f"The MCP server needs the 'mcp' extra: pip install 'harnessdoc[mcp]' ({e})", err=True)
+        raise typer.Exit(2) from None
+    server.run("stdio")
+
+
 if __name__ == "__main__":
     app()

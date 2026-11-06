@@ -12,8 +12,49 @@ re-measures after you change something, so the saving is proven, not claimed.
 - **No LLM calls of its own:** use it as a CLI, in CI, as an MCP server (Claude Code, Cursor, Codex…) or as a
   Claude Code skill — your agent does the reasoning; harnessdoc does the measuring.
 
-> Status: pre-alpha, week 5 of 10. What works today: the static scanner, the usage analyzer and the
-> price book / cost engine. See the [PRD](docs/PRD.md) for the plan.
+> Status: pre-alpha, week 6 of 10. What works today: the static scanner, the usage analyzer, the
+> Markdown report, the MCP server and the Claude Code skill. See the [PRD](docs/PRD.md) for the plan.
+
+## Use it from your coding agent
+
+harnessdoc ships an MCP server and a Claude Code skill. The agent interviews you about what the app is for,
+then calls harnessdoc for every number — harnessdoc itself never calls an LLM.
+
+```bash
+pip install "harnessdoc[mcp]"                       # (from a clone for now: uv pip install -e ".[mcp]")
+
+# Claude Code
+claude mcp add harnessdoc -- harnessdoc mcp
+cp -r skills/harnessdoc ~/.claude/skills/            # then type /harnessdoc in Claude Code
+
+# Cursor / other MCP clients: add to mcp.json
+#   {"mcpServers": {"harnessdoc": {"command": "harnessdoc", "args": ["mcp"]}}}
+```
+
+| MCP tool | Does | Writes files? |
+|---|---|---|
+| `scan` | LLM call sites, findings HD001–HD010, uncovered call sites | no |
+| `measure` | Baseline from usage logs; each finding priced in $/month | no |
+| `price` | Price token counts for any model in the price book | no |
+| `explain_rule` | Why a rule matters, how to fix it, how its saving is estimated | no |
+| `read_goals` / `write_goals` | The project's `harnessdoc.goals.yaml` | `write_goals` only |
+| `write_report` | `harnessdoc-report.md` in the project | yes |
+
+Paths are confined to the project directory you pass. The [skill](skills/harnessdoc/SKILL.md) adds the
+workflow and its rules: quote only harnessdoc's numbers, label estimates, write a guard eval before
+changing an unguarded call, and apply one approved change at a time.
+
+## Goals and the report
+
+```bash
+harnessdoc goals init .        # what the app does, what a successful task is, target, constraints, logs
+harnessdoc report .            # → harnessdoc-report.md
+```
+
+The report states the goal, the baseline (cost per successful task vs target), recommendations ranked by
+measured $/month with what to do first, which call sites need a guard eval before any change, every
+finding in detail, and how each number was computed. It has no timestamp, so the same inputs produce the
+same file and it can be diffed in a PR.
 
 ## Scan a project
 
@@ -118,7 +159,7 @@ is how the scanner's recall and false-positive rate are measured.
 | 1 | Price book + cost engine (3 providers), demo app + answer key ✅ |
 | 2–3 | Python scanner: LLM call sites, checks HD001–HD010, eval coverage, CI exit codes ✅ |
 | 4–5 | Usage analyzer → baseline cost per successful task, findings priced in measured $/month ✅ |
-| 6 | MCP server + Claude Code skill, goals interview, report |
+| 6 | MCP server + Claude Code skill, goals interview, report ✅ |
 | 7–8 | Eval-coverage map, guard evals, before/after with confidence intervals, CI gate |
 | 9 | Experiment runner (your key): replay samples on cheaper settings |
 | 10 | Claude Code session logs, open-source case study, PyPI release |

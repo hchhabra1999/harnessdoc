@@ -17,11 +17,11 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
   "Programming Language :: Python :: 3",
 ]
-dependencies = ["typer>=0.12"]
+dependencies = ["typer>=0.12", "pyyaml>=6"]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0"]
-dev = ["pytest>=8", "ruff>=0.5"]
+mcp = ["mcp>=2.3,<3"]  # MCP SDK v2 (MCPServer); v1's FastMCP API is not supported
+dev = ["pytest>=8", "ruff>=0.5", "mcp>=2.3,<3"]
 
 [project.scripts]
 harnessdoc = "harnessdoc.cli:app"

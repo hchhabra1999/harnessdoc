@@ -1,0 +1,15 @@
+# harnessdoc goals — what this app is for and what counts as success.
+# Read by `harnessdoc report` and the /harnessdoc skill on every run. Edit freely.
+app: Customer support assistant for Acme Gadgets (orders, returns, warranty)
+success: ticket resolved without escalation to a human
+task_key: task_id
+monthly_tasks: 2100
+max_success_rate_drop: 1.0
+target_cost_per_success: 0.025
+priorities:
+- cost
+- quality
+constraints:
+- Support agent stays on Anthropic
+logs:
+- logs/usage.jsonl
