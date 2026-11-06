@@ -133,9 +133,19 @@ def call(name: str, args: dict):
 def test_mcp_tools_and_annotations():
     tools = {t.name: t for t in asyncio.run(mcp_server.server.list_tools())}
     assert set(tools) == {"scan", "measure", "price", "explain_rule", "read_goals", "write_goals", "write_report",
-                          "compare", "check", "scaffold_guard"}
+                          "compare", "check", "scaffold_guard", "plan_experiment", "run_experiment"}
     writers = {n for n, t in tools.items() if not t.annotations.read_only_hint}
-    assert writers == {"write_goals", "write_report", "scaffold_guard"}
+    assert writers == {"write_goals", "write_report", "scaffold_guard", "run_experiment"}
+    assert [n for n, t in tools.items() if t.annotations.open_world_hint] == ["run_experiment"]
+
+
+def test_mcp_run_experiment_needs_approval(tmp_path):
+    with pytest.raises(ToolError, match="user_approved=true"):
+        asyncio.run(mcp_server.server.call_tool("run_experiment", {"project_path": str(tmp_path), "budget_usd": 1,
+                                                                    "user_approved": False}))
+    with pytest.raises(ToolError, match="budget_usd"):
+        asyncio.run(mcp_server.server.call_tool("run_experiment", {"project_path": str(tmp_path), "budget_usd": 0,
+                                                                    "user_approved": True}))
 
 
 def test_mcp_compare_check_and_guard(demo):

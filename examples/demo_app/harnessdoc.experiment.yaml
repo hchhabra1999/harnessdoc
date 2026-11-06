@@ -1,0 +1,17 @@
+# Does the intent router hold up on a small model? (HD006 at acme_support/router.py:12)
+#   harnessdoc experiment plan --project examples/demo_app examples/demo_app/harnessdoc.experiment.yaml
+#   harnessdoc experiment run  --project examples/demo_app examples/demo_app/harnessdoc.experiment.yaml --budget 0.50
+# Needs ANTHROPIC_API_KEY (or an `ant auth login` profile) and the anthropic package. Costs a few cents.
+name: router-on-haiku
+call: acme_support.router:classify_intent
+cases: tests/evals/classify_intent_cases.jsonl
+check: exact
+repeats: 1
+max_success_rate_drop: 2
+variants:
+  baseline: {}                     # the app as written: claude-opus-5-5, max_tokens=16000
+  haiku:
+    model_overrides: {claude-opus-5-5: claude-haiku-5-5}
+  haiku-capped:
+    model_overrides: {claude-opus-5-5: claude-haiku-5-5}
+    max_tokens: 16

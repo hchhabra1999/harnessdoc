@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import typer
@@ -477,6 +478,107 @@ def guard_scaffold(
         typer.echo(f"Created {f.relative_to(root)}")
     typer.echo(f"Next: add 10–30 real cases to {s.cases_file.relative_to(root)}; the call site counts as "
                "covered once it has at least one.")
+
+
+experiment_app = typer.Typer(help="Replay guard-eval cases on alternative setups (uses your API key; costs money).",
+                             no_args_is_help=True)
+app.add_typer(experiment_app, name="experiment")
+
+
+def _site_avg_cost(project: Path, function: str, book: PriceBook) -> tuple[float | None, str | None]:
+    from .experiment import site_avg_cost
+
+    return site_avg_cost(project, function, book)
+
+
+def _load_spec(spec_path: Path):
+    from .experiment import ExperimentError, Spec
+
+    try:
+        return Spec.load(spec_path)
+    except ExperimentError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+
+
+@experiment_app.command("plan")
+def experiment_plan(
+    spec_path: Path = typer.Argument(Path("harnessdoc.experiment.yaml"), exists=True, help="Experiment spec"),
+    project: Path = typer.Option(Path("."), exists=True, file_okay=False, help="Project root"),
+):
+    """Count runs and estimate cost. Calls nothing."""
+    from .experiment import ExperimentError, plan_experiment
+
+    spec = _load_spec(spec_path)
+    book = PriceBook.load(project)
+    avg, model = _site_avg_cost(project, spec.function_name, book)
+    try:
+        p = plan_experiment(spec, project, book, avg, model)
+    except ExperimentError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+    _print_plan(spec, p)
+
+
+def _print_plan(spec, p) -> None:
+    typer.echo(f"Experiment '{spec.name}' on {spec.call}")
+    typer.echo(f"  {p.cases} cases × {spec.repeats} repeat(s) × {len(p.variants)} variants = {p.runs} runs "
+               f"(baseline: {p.variants[0]}; candidates: {', '.join(p.variants[1:])})")
+    if p.est_cost_usd is not None:
+        typer.echo(f"  Estimated cost: ${p.est_cost_usd:.4f} — suggested --budget {p.suggested_budget_usd:.2f}")
+    typer.echo(f"  Basis: {p.basis}")
+
+
+@experiment_app.command("run")
+def experiment_run(
+    spec_path: Path = typer.Argument(Path("harnessdoc.experiment.yaml"), exists=True, help="Experiment spec"),
+    budget: float = typer.Option(..., help="Hard spending cap in USD; the run stops before exceeding it"),
+    project: Path = typer.Option(Path("."), exists=True, file_okay=False, help="Project root"),
+    max_cases: int | None = typer.Option(None, help="Only run the first N cases (pilot)"),
+    out: Path | None = typer.Option(None, help="Results file (default: harnessdoc-experiment-<name>.json)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
+    quiet: bool = typer.Option(False, help="Don't print each case"),
+):
+    """Run the experiment with your API keys (from the environment) and print a verdict per variant."""
+    from .experiment import ExperimentError, plan_experiment, run_experiment
+
+    spec = _load_spec(spec_path)
+    book = PriceBook.load(project)
+    avg, model = _site_avg_cost(project, spec.function_name, book)
+    try:
+        p = plan_experiment(spec, project, book, avg, model)
+    except ExperimentError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+    _print_plan(spec, p)
+    typer.echo(f"  Budget: ${budget:.2f} (hard cap)")
+    if not yes and not typer.confirm("This calls the LLM APIs with your keys and costs money. Run it?"):
+        raise typer.Exit(1)
+    try:
+        r = run_experiment(spec, project, budget, book, max_cases, None if quiet else (lambda s: typer.echo("  " + s)))
+    except ExperimentError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+
+    target = out or project / f"harnessdoc-experiment-{re.sub(r'[^A-Za-z0-9_.-]', '-', spec.name)}.json"
+    target.write_text(json.dumps(r.as_dict(), indent=2, sort_keys=True, default=str), encoding="utf-8")
+    typer.echo(f"\nSpent ${r.spent_usd:.4f} of ${r.budget_usd:.2f}" + (" — stopped at the budget" if r.stopped_early
+                                                                    else ""))
+    if r.sdk_targets_patched == 0:
+        typer.echo("! No provider SDK was found to intercept — install your app's SDK in this environment.")
+    if r.unpriced_models:
+        typer.echo(f"! Unpriced models (cost shown as $0): {', '.join(r.unpriced_models)}")
+    typer.echo(f"\n  {'variant':<14} {'pass':>9} {'cost':>10} {'errors':>7}  verdict vs {r.variants[0].name}")
+    for v in r.variants:
+        verdict = v.verdict["verdict"] if v.verdict else "(baseline)"
+        pct = f"{v.passed}/{v.runs}" if v.runs else "—"
+        typer.echo(f"  {v.name:<14} {pct:>9} {'$' + format(v.cost, '.4f'):>10} {v.errors:>7}  {verdict}")
+    for v in r.variants:
+        if v.verdict:
+            typer.echo(f"\n{v.name}:")
+            for reason in v.verdict["reasons"]:
+                typer.echo(f"  - {reason}")
+    typer.echo(f"\nResults: {target}")
 
 
 @app.command()

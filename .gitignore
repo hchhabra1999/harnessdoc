@@ -10,3 +10,4 @@ build/
 examples/demo_app/logs/usage.jsonl
 examples/demo_app/logs/usage_after.jsonl
 harnessdoc-report.md
+harnessdoc-experiment-*.json

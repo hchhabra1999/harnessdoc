@@ -7,8 +7,8 @@ description: Review an AI app's harness for wasted LLM spend and prove savings. 
 
 harnessdoc is a deterministic measuring tool; **you** do the conversation and the reasoning. Use its MCP
 tools when connected (`scan`, `measure`, `price`, `explain_rule`, `read_goals`, `write_goals`,
-`write_report`, `scaffold_guard`, `compare`, `check`), otherwise the CLI
-(`harnessdoc scan|measure|report|goals|guard|compare|check …`). If neither is available, tell
+`write_report`, `scaffold_guard`, `compare`, `check`, `plan_experiment`, `run_experiment`), otherwise the CLI
+(`harnessdoc scan|measure|report|goals|guard|compare|check|experiment …`). If neither is available, tell
 the user to `pip install "harnessdoc[mcp]"` and add the server with `claude mcp add harnessdoc -- harnessdoc mcp`.
 
 ## Non-negotiable rules
@@ -22,7 +22,10 @@ the user to `pip install "harnessdoc[mcp]"` and add the server with `claude mcp 
 4. **One change at a time, with approval.** Show the diff, wait for a yes, apply, run the guard eval, then move
    to the next. Never batch unrelated changes.
 5. **Respect the goals file's constraints.** Skip any recommendation that conflicts with them and say why.
-6. **Read-only by default.** Only `write_goals`, `write_report` and approved code edits change files.
+6. **Read-only by default.** Only `write_goals`, `write_report`, `scaffold_guard` and approved code edits
+   change files.
+7. **Never spend the user's money without asking.** `run_experiment` calls their LLM APIs: show the plan,
+   get explicit approval and a budget first, every time.
 
 ## Workflow
 
@@ -57,10 +60,15 @@ For the chosen recommendation:
 1. If it can change outputs (model swap, regex instead of LLM, prompt edits) and has no guard eval, call
    `scaffold_guard`, then help the user fill the cases file with 10–30 real inputs and expected outputs.
    Run it on the current code first — it must pass before the change.
-2. Propose the smallest diff that implements the fix. Wait for approval.
-3. Apply it, run the guard eval, and report pass/fail against the goals file's quality bar.
-4. Re-run `scan` to confirm the finding is gone.
-5. Once the change has run in production for a while, call `compare` with the logs from before and after.
+2. For a model swap or a setting change (max tokens, caching) you can test it **before editing any code**
+   with an experiment on the guard cases. Write `harnessdoc.experiment.yaml` (baseline + candidate variants),
+   call `plan_experiment`, show the user the runs and estimated cost, and ask for approval **and a budget**.
+   Only then call `run_experiment` with `user_approved=true`. It uses the user's API keys and costs money —
+   never run it on your own initiative. Report each variant's verdict verbatim.
+3. Propose the smallest diff that implements the fix. Wait for approval.
+4. Apply it, run the guard eval, and report pass/fail against the goals file's quality bar.
+5. Re-run `scan` to confirm the finding is gone.
+6. Once the change has run in production for a while, call `compare` with the logs from before and after.
    Report its verdict verbatim:
    - **SHIP** — cheaper, and quality held within the allowed drop.
    - **REJECT** — quality fell beyond the allowed drop, or cost went up: recommend reverting.

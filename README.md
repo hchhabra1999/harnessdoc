@@ -12,9 +12,9 @@ re-measures after you change something, so the saving is proven, not claimed.
 - **No LLM calls of its own:** use it as a CLI, in CI, as an MCP server (Claude Code, Cursor, Codex…) or as a
   Claude Code skill — your agent does the reasoning; harnessdoc does the measuring.
 
-> Status: pre-alpha, week 8 of 10. What works today: the static scanner, the usage analyzer, the
-> Markdown report, before/after comparison, guard-eval scaffolds, the CI gate, the MCP server and the
-> Claude Code skill. See the [PRD](docs/PRD.md) for the plan.
+> Status: pre-alpha, week 9 of 10. What works today: the static scanner, the usage analyzer, the
+> Markdown report, before/after comparison, guard-eval scaffolds, the CI gate, the experiment runner, the
+> MCP server and the Claude Code skill. See the [PRD](docs/PRD.md) for the plan.
 
 ## Use it from your coding agent
 
@@ -43,6 +43,8 @@ cp -r skills/harnessdoc ~/.claude/skills/            # then type /harnessdoc in 
 | `scaffold_guard` | Guard eval (pytest + cases file) for an uncovered call site; never overwrites | yes |
 | `compare` | Before/after verdict: SHIP / REJECT / INCONCLUSIVE / NO CLEAR SAVING | no |
 | `check` | What the CI gate would say: new vs fixed findings against the baseline | no |
+| `plan_experiment` | Runs and estimated cost of an experiment; calls nothing | no |
+| `run_experiment` | Runs it with your keys — needs `user_approved=true` and a budget | results file |
 
 Paths are confined to the project directory you pass. The [skill](skills/harnessdoc/SKILL.md) adds the
 workflow and its rules: quote only harnessdoc's numbers, label estimates, write a guard eval before
@@ -80,6 +82,32 @@ doesn't claim it. With a 5-point bar the same data says SHIP.
 
 Guard evals count toward coverage only once their cases file has at least one case, and a test covers an
 LLM call when it calls any function that leads to it (handler → helper → LLM wrapper).
+
+## Try a cheaper setup before changing code
+
+```bash
+harnessdoc experiment plan  harnessdoc.experiment.yaml            # runs + estimated cost; calls nothing
+harnessdoc experiment run   harnessdoc.experiment.yaml --budget 0.50
+```
+
+An experiment replays a call site's guard-eval cases through **your real code** under several variants —
+another model (`model_overrides`), a different output cap (`max_tokens`), extra request settings
+(`kwargs`, e.g. `cache_control`), or environment flags your app reads (`env`) — with no code edits.
+harnessdoc briefly intercepts the Anthropic / OpenAI / Gemini SDK call to apply the variant and record usage,
+scores every answer, and gives each variant the same SHIP / REJECT / INCONCLUSIVE verdict as `compare`.
+
+It is the only part of harnessdoc that costs money, so:
+
+- it uses **your** API keys from the environment — harnessdoc never reads or stores them;
+- `--budget` is a hard cap: no new LLM call starts once it is reached (one in-flight call can overshoot by its
+  own cost), and the stop can't be swallowed by an app's `except Exception` retry loop;
+- `run` shows the plan and asks before spending (unless `--yes`); over MCP, `run_experiment` refuses
+  without `user_approved=true` and a budget;
+- variants are interleaved case by case, so drift doesn't favour one of them; prompts and outputs are never
+  written to disk.
+
+The demo app ships one: [`harnessdoc.experiment.yaml`](examples/demo_app/harnessdoc.experiment.yaml) tests
+the intent router on Haiku against its 24 labelled cases — 72 runs, estimated at about one cent.
 
 ## CI gate
 
@@ -209,7 +237,7 @@ is how the scanner's recall and false-positive rate are measured.
 | 4–5 | Usage analyzer → baseline cost per successful task, findings priced in measured $/month ✅ |
 | 6 | MCP server + Claude Code skill, goals interview, report ✅ |
 | 7–8 | Eval-coverage map, guard evals, before/after with confidence intervals, CI gate ✅ |
-| 9 | Experiment runner (your key): replay samples on cheaper settings |
+| 9 | Experiment runner (your key): replay samples on cheaper settings ✅ |
 | 10 | Claude Code session logs, open-source case study, PyPI release |
 
 ## Licence

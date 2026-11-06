@@ -1,0 +1,24 @@
+{"id": "status-1", "input": {"message": "Where is my parcel? It's been a week since I ordered."}, "expected": "order_status"}
+{"id": "status-2", "input": {"message": "Tracking hasn't updated since Monday, ORD-482913."}, "expected": "order_status"}
+{"id": "status-3", "input": {"message": "When will my headphones arrive?"}, "expected": "order_status"}
+{"id": "status-4", "input": {"message": "Has my order shipped yet?"}, "expected": "order_status"}
+{"id": "return-1", "input": {"message": "I want to send these earphones back, they don't fit."}, "expected": "return"}
+{"id": "return-2", "input": {"message": "How do I return a laptop I bought last week?"}, "expected": "return"}
+{"id": "return-3", "input": {"message": "Can I get a return label for ORD-118204?"}, "expected": "return"}
+{"id": "return-4", "input": {"message": "Changed my mind about the speaker, it's still sealed. Can I send it back?"}, "expected": "return"}
+{"id": "refund-1", "input": {"message": "I returned the tablet two weeks ago and still haven't got my money."}, "expected": "refund"}
+{"id": "refund-2", "input": {"message": "You charged me twice for the same order."}, "expected": "refund"}
+{"id": "refund-3", "input": {"message": "The keyboard arrived with a scratch, can I get part of my money back?"}, "expected": "refund"}
+{"id": "refund-4", "input": {"message": "Express delivery took five days, I want the shipping fee refunded."}, "expected": "refund"}
+{"id": "warranty-1", "input": {"message": "My laptop screen flickers after 2 months."}, "expected": "warranty"}
+{"id": "warranty-2", "input": {"message": "The phone battery is swelling, it's 10 months old."}, "expected": "warranty"}
+{"id": "warranty-3", "input": {"message": "Smartwatch stopped charging, it's under Acme Care Plus."}, "expected": "warranty"}
+{"id": "warranty-4", "input": {"message": "Left earbud has no sound anymore, bought it in March."}, "expected": "warranty"}
+{"id": "product-1", "input": {"message": "Does the X200 support fast charging?"}, "expected": "product_question"}
+{"id": "product-2", "input": {"message": "Is the Nova tablet compatible with a stylus?"}, "expected": "product_question"}
+{"id": "product-3", "input": {"message": "What's the difference between the Pro and the Air models?"}, "expected": "product_question"}
+{"id": "product-4", "input": {"message": "How much storage does the base laptop have?"}, "expected": "product_question"}
+{"id": "other-1", "input": {"message": "Do you have a store in Pune?"}, "expected": "other"}
+{"id": "other-2", "input": {"message": "I'd like to apply for a job at Acme."}, "expected": "other"}
+{"id": "tricky-1", "input": {"message": "The replacement you sent under warranty is also broken, I just want my money back now."}, "expected": "refund"}
+{"id": "tricky-2", "input": {"message": "Before I buy the X200: if it breaks, how long is the warranty?"}, "expected": "product_question"}

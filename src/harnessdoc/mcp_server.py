@@ -3,9 +3,11 @@
     harnessdoc mcp                      # stdio transport
     claude mcp add harnessdoc -- harnessdoc mcp
 
-harnessdoc makes no LLM calls. The connected agent does the reasoning and the conversation; these tools
-return deterministic measurements. Read-only tools are annotated as such; only `write_goals`,
-`write_report` and `scaffold_guard` create files, and only inside the project directory they are given.
+harnessdoc makes no LLM calls of its own. The connected agent does the reasoning and the conversation; these
+tools return deterministic measurements. Read-only tools are annotated as such; only `write_goals`,
+`write_report`, `scaffold_guard` and `run_experiment` create files, and only inside the project directory.
+`run_experiment` is the one exception to "no LLM calls": it runs the *user's* code with the user's API keys,
+so it requires an explicit budget and `user_approved=true`.
 """
 
 from __future__ import annotations
@@ -265,3 +267,72 @@ def scaffold_guard(project_path: str, site: str, tests_dir: str = "tests/evals")
     return {"call_site": s.site.id, "test_file": str(s.test_file.relative_to(root)),
             "cases_file": str(s.cases_file.relative_to(root)),
             "created": [str(p.relative_to(root)) for p in s.created]}
+
+
+SPENDS = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
+
+
+def _spec(root: Path, spec: str):
+    from .experiment import ExperimentError, Spec
+
+    try:
+        return Spec.load(_inside(root, spec))
+    except ExperimentError as e:
+        raise ToolError(str(e)) from None
+
+
+@server.tool(annotations=READ_ONLY)
+def plan_experiment(project_path: str, spec: str = "harnessdoc.experiment.yaml") -> dict[str, Any]:
+    """Describe an experiment before running it: cases, variants, number of runs and — when usage logs for the
+    call site exist — an estimated cost and suggested budget. Calls nothing. Show this to the user and get
+    their approval and a budget before calling run_experiment."""
+    from .experiment import ExperimentError, site_avg_cost
+    from .experiment import plan_experiment as plan
+
+    root = _root(project_path)
+    s = _spec(root, spec)
+    book = PriceBook.load(root)
+    avg, model = site_avg_cost(root, s.function_name, book)
+    try:
+        p = plan(s, root, book, avg, model)
+    except ExperimentError as e:
+        raise ToolError(str(e)) from None
+    return {"name": s.name, "call": s.call, "cases": p.cases, "runs": p.runs, "variants": p.variants,
+            "baseline": p.variants[0], "estimated_cost_usd": p.est_cost_usd,
+            "suggested_budget_usd": p.suggested_budget_usd, "basis": p.basis}
+
+
+@server.tool(annotations=SPENDS)
+def run_experiment(project_path: str, budget_usd: float, user_approved: bool,
+                   spec: str = "harnessdoc.experiment.yaml", max_cases: int | None = None) -> dict[str, Any]:
+    """Run an experiment: call the project's function on every case under each variant, with the user's API
+    keys from the environment. COSTS MONEY. Only call after showing plan_experiment to the user and getting
+    explicit approval and a budget; pass user_approved=true. Stops before exceeding budget_usd. Returns a
+    verdict per variant (SHIP / REJECT / INCONCLUSIVE / NO CLEAR SAVING) and writes the full results file."""
+    import json
+    import re
+
+    from .experiment import ExperimentError
+    from .experiment import run_experiment as run
+
+    if not user_approved:
+        raise ToolError("not run: experiments spend money with the user's API keys. Show plan_experiment to the "
+                        "user, ask for approval and a budget, then call again with user_approved=true.")
+    if budget_usd <= 0 or budget_usd > 100:
+        raise ToolError("budget_usd must be between 0 and 100; larger runs should go through the CLI")
+    root = _root(project_path)
+    s = _spec(root, spec)
+    try:
+        r = run(s, root, budget_usd, PriceBook.load(root), max_cases)
+    except ExperimentError as e:
+        raise ToolError(str(e)) from None
+    out = root / f"harnessdoc-experiment-{re.sub(r'[^A-Za-z0-9_.-]', '-', s.name)}.json"
+    out.write_text(json.dumps(r.as_dict(), indent=2, sort_keys=True, default=str), encoding="utf-8")
+    return {
+        "spent_usd": r.spent_usd, "budget_usd": r.budget_usd, "stopped_early": r.stopped_early,
+        "sdk_targets_patched": r.sdk_targets_patched, "unpriced_models": r.unpriced_models,
+        "variants": [{"name": v.name, "runs": v.runs, "passed": v.passed, "cost_usd": v.cost, "errors": v.errors,
+                      "verdict": v.verdict["verdict"] if v.verdict else "baseline",
+                      "reasons": v.verdict["reasons"] if v.verdict else []} for v in r.variants],
+        "results_file": str(out.relative_to(root)),
+    }
