@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-11-06",
+  "unit": "USD per 1M tokens",
+  "notes": "Provider prices change often. Override or extend with a harnessdoc.pricing.json in your project root. Fields marked 'verify' were not confirmed against an official page on as_of.",
+  "providers": {
+    "anthropic": {
+      "sources": [
+        "https://platform.claude.com/docs/en/about-claude/pricing",
+        "https://platform.claude.com/docs/en/build-with-claude/prompt-caching"
+      ],
+      "caching": {
+        "mode": "explicit_and_automatic",
+        "default_read_multiplier": 0.1,
+        "write_multipliers": { "5m": 1.25, "1h": 2.0 },
+        "default_ttl": "5m",
+        "max_breakpoints": 4,
+        "render_order": ["tools", "system", "messages"],
+        "usage_fields": {
+          "cache_read": "usage.cache_read_input_tokens",
+          "cache_write": "usage.cache_creation_input_tokens",
+          "uncached_input": "usage.input_tokens"
+        }
+      },
+      "batch_multiplier": 0.5,
+      "models": {
+        "claude-fable-5-1":  { "input": 10.0, "output": 50.0, "cache_read": 0.25, "min_cache_tokens": 512 },
+        "claude-fable-5":    { "input": 10.0, "output": 50.0, "min_cache_tokens": 512 },
+        "claude-mythos-5-1": { "input": 10.0, "output": 50.0, "cache_read": 0.25, "min_cache_tokens": 512 },
+        "claude-opus-5-5":   { "input": 4.0,  "output": 20.0, "cache_read": 0.20, "min_cache_tokens": 512,
+                               "fast_mode": { "input": 8.0, "output": 40.0 } },
+        "claude-opus-5":     { "input": 5.0,  "output": 25.0, "min_cache_tokens": 512,
+                               "fast_mode": { "input": 10.0, "output": 50.0 } },
+        "claude-opus-4-8":   { "input": 5.0,  "output": 25.0, "min_cache_tokens": 1024 },
+        "claude-opus-4-7":   { "input": 5.0,  "output": 25.0, "min_cache_tokens": 2048 },
+        "claude-opus-4-6":   { "input": 5.0,  "output": 25.0, "min_cache_tokens": 4096 },
+        "claude-sonnet-5-5": { "input": 2.0,  "output": 10.0, "cache_read": 0.20, "min_cache_tokens": 512 },
+        "claude-sonnet-5":   { "input": 2.0,  "output": 10.0, "min_cache_tokens": 1024 },
+        "claude-sonnet-4-6": { "input": 3.0,  "output": 15.0, "min_cache_tokens": 1024 },
+        "claude-haiku-5-5":  { "input": 0.10, "output": 0.50, "min_cache_tokens": 512,
+                               "long_context": { "threshold_input_tokens": 100000, "input": 0.50, "output": 2.50 } },
+        "claude-haiku-4-5":  { "input": 1.0,  "output": 5.0,  "min_cache_tokens": 4096 }
+      }
+    },
+    "openai": {
+      "sources": [
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/guides/prompt-caching"
+      ],
+      "caching": {
+        "mode": "implicit; explicit breakpoints on gpt-5.6 and later",
+        "default_read_multiplier": 0.1,
+        "write_multipliers": { "30m": 1.25, "12h": 2.5 },
+        "write_charged_from": "gpt-5.6",
+        "default_ttl": "30m",
+        "min_cache_tokens_default": 1024,
+        "usage_fields": {
+          "cache_read": "usage.input_tokens_details.cached_tokens",
+          "cache_write": "usage.input_tokens_details.cache_write_tokens",
+          "uncached_input": "usage.input_tokens"
+        }
+      },
+      "batch_multiplier": 0.5,
+      "long_context_note": "Prices above 272K input tokens are higher (listed separately on the pricing page) — verify",
+      "models": {
+        "gpt-6-astra":   { "input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_writes": true },
+        "gpt-6.1-sol":   { "input": 2.0,  "output": 10.0, "cache_read": 0.10, "cache_writes": true },
+        "gpt-6.1-terra": { "input": 1.0,  "output": 5.0,  "cache_read": 0.05, "cache_writes": true },
+        "gpt-6-luna":    { "input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_writes": true },
+        "gpt-6-sol":     { "input": 2.0,  "output": 10.0, "cache_read": 0.20, "cache_writes": true },
+        "gpt-5.6-sol":   { "input": 4.0,  "output": 20.0, "cache_read": 0.40, "cache_writes": true,
+                           "note": "promotional pricing until 2026-11-30 per pricing page — verify the post-promo price" },
+        "gpt-5.6-terra": { "input": 2.0,  "output": 12.0, "cache_read": 0.20, "cache_writes": true },
+        "gpt-5.6-luna":  { "input": 0.20, "output": 1.20, "cache_read": 0.02, "cache_writes": true },
+        "gpt-5.5":       { "input": 5.0,  "output": 30.0, "cache_read": 0.50, "cache_writes": false, "min_cache_tokens": null },
+        "gpt-5.5-pro":   { "input": 30.0, "output": 180.0, "cache_read": null, "cache_writes": false, "min_cache_tokens": null },
+        "gpt-5.4":       { "input": 2.5,  "output": 15.0, "cache_read": 0.25, "cache_writes": false, "min_cache_tokens": null },
+        "gpt-5.4-pro":   { "input": 30.0, "output": 180.0, "cache_read": null, "cache_writes": false, "min_cache_tokens": null }
+      }
+    },
+    "gemini": {
+      "sources": ["https://aistudio.google.com/docs/pricing", "https://aistudio.google.com/docs/caching"],
+      "caching": {
+        "mode": "implicit (2.5+) and explicit context caches with hourly storage",
+        "default_read_multiplier": 0.1,
+        "write_multipliers": {},
+        "min_cache_tokens_default": "verify (reported 2048–4096 depending on model)",
+        "usage_fields": {
+          "cache_read": "usage_metadata.cached_content_token_count",
+          "uncached_input": "usage_metadata.prompt_token_count"
+        }
+      },
+      "batch_multiplier": 0.5,
+      "model_ids_note": "IDs for models newer than 3.1 are inferred from display names — verify against the models list",
+      "models": {
+        "gemini-4-argon": {
+          "input": 2.0, "output": 10.0, "cache_read": 0.10, "storage_per_mtok_hour": null,
+          "schedule": [{ "from": "2026-12-01", "input": 4.0, "output": 20.0, "cache_read": 0.20 }],
+          "note": "implicit caching only"
+        },
+        "gemini-3.8-flash": {
+          "input": 0.75, "output": 3.75, "cache_read": 0.075, "storage_per_mtok_hour": 0.50, "batch_multiplier": 1.0,
+          "schedule": [{ "from": "2027-01-01", "input": 1.50, "output": 7.50, "cache_read": 0.15, "storage_per_mtok_hour": 1.00 }]
+        },
+        "gemini-3.6-flash":       { "input": 0.75, "output": 3.75, "cache_read": 0.075, "storage_per_mtok_hour": 0.50, "batch_multiplier": 1.0 },
+        "gemini-3.5-flash-lite":  { "input": 0.30, "output": 2.50, "cache_read": 0.03,  "storage_per_mtok_hour": 1.00 },
+        "gemini-3.1-pro-preview": {
+          "input": 2.0, "output": 12.0, "cache_read": 0.20, "storage_per_mtok_hour": 4.50,
+          "long_context": { "threshold_input_tokens": 200000, "input": 4.0, "output": 18.0, "cache_read": 0.40 }
+        },
+        "gemini-3.1-flash-lite":  { "input": 0.25, "output": 1.50, "cache_read": 0.025, "storage_per_mtok_hour": 1.00 },
+        "gemini-3-flash-preview": { "input": 0.50, "output": 3.00, "cache_read": 0.05,  "storage_per_mtok_hour": 1.00 },
+        "gemini-2.5-pro": {
+          "input": 1.25, "output": 10.0, "cache_read": 0.125, "storage_per_mtok_hour": 4.50, "deprecated": true,
+          "routes_to_from": { "date": "2026-12-01", "model": "gemini-3.8-flash" },
+          "long_context": { "threshold_input_tokens": 200000, "input": 2.50, "output": 15.0, "cache_read": 0.25 }
+        },
+        "gemini-2.5-flash": {
+          "input": 0.30, "output": 2.50, "cache_read": 0.03, "storage_per_mtok_hour": 1.00, "deprecated": true,
+          "routes_to_from": { "date": "2026-12-01", "model": "gemini-3.5-flash-lite" }
+        },
+        "gemini-2.5-flash-lite":  { "input": 0.10, "output": 0.40, "cache_read": 0.01, "storage_per_mtok_hour": 1.00 }
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "harnessdoc"
+version = "0.0.1"
+description = "Measure what each successful task of your AI app costs — provider-neutral, deterministic, and CI-ready."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Harsh Chhabra" }]
+keywords = ["llm", "cost", "tokens", "prompt-caching", "evals", "mcp", "claude-code", "harness"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Quality Assurance",
+  "Programming Language :: Python :: 3",
+]
+dependencies = ["typer>=0.12"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+harnessdoc = "harnessdoc.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harnessdoc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["examples"]
+
+[tool.ruff.lint]
+# B008: Typer Option()/Argument() defaults are the framework's intended pattern.
+extend-ignore = ["B008"]
