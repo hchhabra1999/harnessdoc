@@ -132,9 +132,29 @@ def call(name: str, args: dict):
 
 def test_mcp_tools_and_annotations():
     tools = {t.name: t for t in asyncio.run(mcp_server.server.list_tools())}
-    assert set(tools) == {"scan", "measure", "price", "explain_rule", "read_goals", "write_goals", "write_report"}
+    assert set(tools) == {"scan", "measure", "price", "explain_rule", "read_goals", "write_goals", "write_report",
+                          "compare", "check", "scaffold_guard"}
     writers = {n for n, t in tools.items() if not t.annotations.read_only_hint}
-    assert writers == {"write_goals", "write_report"}
+    assert writers == {"write_goals", "write_report", "scaffold_guard"}
+
+
+def test_mcp_compare_check_and_guard(demo):
+    spec = importlib.util.spec_from_file_location("gen", DEMO / "logs" / "generate_logs.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    (demo / "logs" / "after.jsonl").write_text(
+        "".join(json.dumps(x, sort_keys=True) + "\n" for x in gen.generate(scenario="after")))
+    c = call("compare", {"project_path": str(demo), "before": ["logs/usage.jsonl"], "after": ["logs/after.jsonl"]})
+    assert c["cost"] == "LOWER" and c["verdict"] in ("SHIP", "INCONCLUSIVE")
+
+    ck = call("check", {"project_path": str(demo)})
+    assert ck["baseline_found"] is False and ck["would_fail"] is True
+
+    g = call("scaffold_guard", {"project_path": str(demo), "site": "summarise_closed_tickets"})
+    assert g["created"] == ["tests/evals/test_summarise_closed_tickets_guard.py",
+                            "tests/evals/summarise_closed_tickets_cases.jsonl"]
+    with pytest.raises(ToolError, match="no LLM call site"):
+        asyncio.run(mcp_server.server.call_tool("scaffold_guard", {"project_path": str(demo), "site": "nope"}))
 
 
 def test_mcp_scan_measure_report(demo):

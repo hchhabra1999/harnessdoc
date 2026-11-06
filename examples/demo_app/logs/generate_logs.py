@@ -23,10 +23,10 @@ TOOLS_TOKENS = 420
 START = datetime(2026, 10, 30, tzinfo=timezone.utc)
 
 
-def anthropic(model: str, inp: int, out: int, rng: random.Random) -> dict:
+def anthropic(model: str, inp: int, out: int, rng: random.Random, read: int = 0, write: int = 0) -> dict:
     return {"id": f"msg_{rng.getrandbits(48):012x}", "type": "message", "model": model,
             "usage": {"input_tokens": inp, "output_tokens": out,
-                      "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+                      "cache_read_input_tokens": read, "cache_creation_input_tokens": write}}
 
 
 def openai_chat(model: str, prompt: int, completion: int) -> dict:
@@ -35,7 +35,14 @@ def openai_chat(model: str, prompt: int, completion: int) -> dict:
                       "prompt_tokens_details": {"cached_tokens": 0}}}
 
 
-def generate(days: int = 7, per_day: int = 70, seed: int = 7) -> list[dict]:
+def generate(days: int = 7, per_day: int = 70, seed: int = 7, scenario: str = "before") -> list[dict]:
+    """scenario="before": the app as written. scenario="after": the week after applying harnessdoc's top
+    recommendations (Haiku router, regex extraction, cached agent prefix with a 6-turn cap, nightly job on
+    the Batch API with a small model) — with a slightly *lower* success rate, so quality is really tested."""
+    if scenario == "after":
+        return _generate_after(days, per_day, seed + 1)
+    if scenario != "before":
+        raise ValueError("scenario must be 'before' or 'after'")
     rng = random.Random(seed)
     lines: list[dict] = []
     for d in range(days):
@@ -73,14 +80,63 @@ def generate(days: int = 7, per_day: int = 70, seed: int = 7) -> list[dict]:
     return lines
 
 
+def _generate_after(days: int, per_day: int, seed: int) -> list[dict]:
+    rng = random.Random(seed)
+    lines: list[dict] = []
+    start = START + timedelta(days=days)  # the week after the baseline
+    prefix = POLICY_TOKENS + TOOLS_TOKENS
+    for d in range(days):
+        day = start + timedelta(days=d)
+        closed = []
+        for i in range(per_day + rng.randint(-8, 8)):
+            task = f"A{d:02d}{i:03d}"
+            t = day + timedelta(hours=8, seconds=rng.randint(0, 12 * 3600))
+
+            def rec(site: str, response: dict, when: datetime, task: str = task) -> None:
+                lines.append({"ts": when.isoformat(), "task_id": task, "site": site, "response": response})
+
+            rec("classify_intent", anthropic("claude-haiku-5-5", rng.randint(60, 140), rng.randint(2, 5), rng), t)
+            if rng.random() < 0.03:  # regex found nothing: LLM fallback
+                rec("extract_order_id", openai_chat("gpt-6.1-sol", rng.randint(70, 160), rng.randint(5, 9)),
+                    t + timedelta(seconds=1))
+
+            turns = min(6, 1 + int(rng.expovariate(0.45)))  # capped tool loop
+            history = rng.randint(40, 120)
+            cached_history = 0
+            for k in range(turns):
+                out = rng.randint(60, 260)
+                if k == 0:  # first turn writes the static prefix + opening history to the cache
+                    resp = anthropic("claude-opus-5-5", 15, out, rng, read=0, write=prefix + history)
+                else:  # later turns read the prefix + earlier history, write only the new tail
+                    resp = anthropic("claude-opus-5-5", 15, out, rng, read=prefix + cached_history,
+                                     write=history - cached_history)
+                rec("respond", resp, t + timedelta(seconds=3 + 9 * k))
+                cached_history = history
+                history += out + rng.randint(30, 220)
+
+            p_success = 0.875 - 0.05 * max(0, turns - 3)  # ~0.5 pt below the baseline's 0.88
+            success = rng.random() < p_success
+            lines.append({"type": "outcome", "task_id": task, "success": success,
+                          "ts": (t + timedelta(minutes=5)).isoformat()})
+            closed.append(rng.randint(700, 2600))
+
+        night = day + timedelta(days=1, hours=2)
+        for j, transcript_tokens in enumerate(closed):
+            lines.append({"ts": (night + timedelta(seconds=4 * j)).isoformat(), "site": "summarise_closed_tickets",
+                          "batch": True,
+                          "response": openai_chat("gpt-6-luna", transcript_tokens + 30, rng.randint(40, 75))})
+    return lines
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "usage.jsonl")
     ap.add_argument("--days", type=int, default=7)
     ap.add_argument("--per-day", type=int, default=70)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--scenario", choices=["before", "after"], default="before")
     args = ap.parse_args()
-    lines = generate(args.days, args.per_day, args.seed)
+    lines = generate(args.days, args.per_day, args.seed, args.scenario)
     args.out.write_text("".join(json.dumps(x, sort_keys=True) + "\n" for x in lines), encoding="utf-8")
     print(f"wrote {len(lines)} lines → {args.out}")
 

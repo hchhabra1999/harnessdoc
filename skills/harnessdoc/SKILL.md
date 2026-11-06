@@ -7,14 +7,15 @@ description: Review an AI app's harness for wasted LLM spend and prove savings. 
 
 harnessdoc is a deterministic measuring tool; **you** do the conversation and the reasoning. Use its MCP
 tools when connected (`scan`, `measure`, `price`, `explain_rule`, `read_goals`, `write_goals`,
-`write_report`), otherwise the CLI (`harnessdoc scan|measure|report|goals …`). If neither is available, tell
+`write_report`, `scaffold_guard`, `compare`, `check`), otherwise the CLI
+(`harnessdoc scan|measure|report|goals|guard|compare|check …`). If neither is available, tell
 the user to `pip install "harnessdoc[mcp]"` and add the server with `claude mcp add harnessdoc -- harnessdoc mcp`.
 
 ## Non-negotiable rules
 
 1. **Only quote numbers harnessdoc returned.** Never estimate a dollar figure, token count or percentage
    yourself. If a number isn't in the tool output, say it isn't measured.
-2. **Label estimates.** Savings are estimates until a before/after run measures them — say so.
+2. **Label estimates.** Savings are estimates until `compare` returns SHIP on before/after logs — say so.
 3. **Guard before you change quality.** Never change a call site's model, prompt or replace it with code while
    its finding shows `guard: []`. Offer to write a small guard eval first (10–30 real inputs with expected
    outputs, in the project's existing test framework).
@@ -53,12 +54,24 @@ saving, guard eval (or "none — write one first"), and prerequisites (e.g. HD00
 
 ### 5. Fix, one at a time (only if the user asks)
 For the chosen recommendation:
-1. If it can change outputs (model swap, regex instead of LLM, prompt edits) and has no guard eval, write the
-   guard eval first and run it on the current code to get a baseline.
+1. If it can change outputs (model swap, regex instead of LLM, prompt edits) and has no guard eval, call
+   `scaffold_guard`, then help the user fill the cases file with 10–30 real inputs and expected outputs.
+   Run it on the current code first — it must pass before the change.
 2. Propose the smallest diff that implements the fix. Wait for approval.
 3. Apply it, run the guard eval, and report pass/fail against the goals file's quality bar.
-4. Re-run `scan` to confirm the finding is gone. When new logs exist, re-run `measure` and compare cost per
-   successful task with the earlier baseline.
+4. Re-run `scan` to confirm the finding is gone.
+5. Once the change has run in production for a while, call `compare` with the logs from before and after.
+   Report its verdict verbatim:
+   - **SHIP** — cheaper, and quality held within the allowed drop.
+   - **REJECT** — quality fell beyond the allowed drop, or cost went up: recommend reverting.
+   - **INCONCLUSIVE** — say how many tasks per window (`tasks_needed_per_window`) would settle it. Do not
+     call it a win.
+   - **NO CLEAR SAVING** — quality held but the cost change is within noise.
+
+### 6. Keep it from coming back (optional)
+Offer the CI gate: `harnessdoc check . --write-baseline harnessdoc-baseline.json` once, commit it, and add
+`examples/ci/harnessdoc.yml` as a workflow. Pull requests then fail only on *new* waste. The `check` tool
+shows what the gate would say right now.
 
 ## Reading the findings
 

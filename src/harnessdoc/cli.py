@@ -279,6 +279,78 @@ def report(
                + (f", {a.base.requests:,} requests measured" if a.base else ", no usage logs") + ")")
 
 
+@app.command()
+def compare(
+    before: list[Path] = typer.Option(..., "--before", exists=True, help="Usage logs before the change"),
+    after: list[Path] = typer.Option(..., "--after", exists=True, help="Usage logs after the change"),
+    project: Path = typer.Option(Path("."), exists=True, file_okay=False, help="Project root (for goals/prices)"),
+    max_drop: float | None = typer.Option(None, help="Allowed success-rate drop in points (default: goals file, 1)"),
+    site: str | None = typer.Option(None, help="Only compare requests from this call site / function"),
+    task_key: str | None = typer.Option(None, help="Field that groups requests into tasks"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    require_ship: bool = typer.Option(False, help="Exit 1 unless the verdict is SHIP (for CI)"),
+    pricing: Path | None = PricingOpt,
+):
+    """Before/after: did a change lower cost per successful task without hurting quality?"""
+    from .compare import compare as run_compare
+    from .goals import GoalsError, load_goals
+    from .usage import load_logs
+
+    try:
+        goals = load_goals(project)
+    except GoalsError as e:
+        typer.echo(f"harnessdoc.goals.yaml: {e}", err=True)
+        raise typer.Exit(2) from None
+    drop = max_drop if max_drop is not None else (goals.max_success_rate_drop if goals else 1.0)
+    key = task_key or (goals.task_key if goals else None)
+    book = PriceBook.load(pricing if pricing else project)
+    b, a = load_logs(list(before), key), load_logs(list(after), key)
+    c = run_compare((b.records, b.outcomes), (a.records, a.outcomes), book, drop, site)
+
+    if as_json:
+        typer.echo(json.dumps(c.as_dict(), indent=2, sort_keys=True, default=str))
+    else:
+        _print_compare(c, drop, site)
+    if c.verdict == "REJECT" or (require_ship and c.verdict != "SHIP"):
+        raise typer.Exit(1)
+
+
+def _ci(iv, pct: bool = False, digits: int = 4) -> str:
+    if iv is None:
+        return "—"
+    if pct:
+        return f"{iv.value:.1%} ({iv.low:.1%}–{iv.high:.1%})"
+    return f"${iv.value:.{digits}f} (${iv.low:.{digits}f}–${iv.high:.{digits}f})"
+
+
+def _print_compare(c, drop: float, site: str | None) -> None:
+    scope = f" · call site `{site}` only" if site else ""
+    typer.echo(f"Verdict: {c.verdict}   (quality {c.quality} vs allowed −{drop:g} pt · cost {c.cost}){scope}\n")
+    rows = [
+        ("Window", *(f"{x.window_days:.1f} days" if x.window_days is not None else "—" for x in (c.before, c.after))),
+        ("LLM requests", f"{c.before.requests:,}", f"{c.after.requests:,}"),
+        ("Spend", f"${c.before.cost:,.2f}", f"${c.after.cost:,.2f}"),
+        ("Spend / 30 days", *(f"${x.cost / x.window_days * 30:,.2f}" if x.window_days and x.window_days >= 1
+                              else "—" for x in (c.before, c.after))),
+        ("Cache hit rate", *(f"{x.cache_hit_rate:.1%}" if x.cache_hit_rate is not None else "—"
+                             for x in (c.before, c.after))),
+        ("Success rate (95% CI)", _ci(c.before.success_rate, True), _ci(c.after.success_rate, True)),
+        ("Cost per successful task", _ci(c.before.cost_per_success), _ci(c.after.cost_per_success)),
+    ]
+    typer.echo(f"  {'':<26} {'before':<28} {'after':<28}")
+    for label, x, y in rows:
+        typer.echo(f"  {label:<26} {x:<28} {y:<28}")
+    typer.echo("\nWhy")
+    for r in c.reasons:
+        typer.echo(f"  - {r}")
+    if c.sites:
+        unit = c.sites[0].unit
+        typer.echo(f"\nBy call site (spend {unit})")
+        for s in c.sites:
+            change = f"{(s.after / s.before - 1):+.0%}" if s.before else "new"
+            typer.echo(f"  {s.site:<30} ${s.before:.5f} → ${s.after:.5f}  {change}")
+
+
 goals_app = typer.Typer(help="Create or show harnessdoc.goals.yaml (what the app is for, what success means).",
                         no_args_is_help=True)
 app.add_typer(goals_app, name="goals")
@@ -329,6 +401,82 @@ def goals_show(path: Path = typer.Argument(Path("."), exists=True, help="Project
         typer.echo("No harnessdoc.goals.yaml here. Create one with `harnessdoc goals init`.")
         raise typer.Exit(1)
     typer.echo(json.dumps(g.as_dict(), indent=2))
+
+
+@app.command("check")
+def check_cmd(
+    path: Path = typer.Argument(Path("."), exists=True, file_okay=False, help="Project root"),
+    baseline: Path | None = typer.Option(None, help="Baseline file; only findings not in it count as new"),
+    write_baseline: Path | None = typer.Option(None, help="Record current findings as the baseline and exit"),
+    fail_on: str = typer.Option("medium", help="Exit 1 if a NEW finding is at or above: high|medium|low|info|none"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    pricing: Path | None = PricingOpt,
+):
+    """CI gate: fail on new harness findings only (existing ones live in a committed baseline)."""
+    from .check import check as run_check
+    from .check import read_baseline
+    from .check import write_baseline as save_baseline
+    from .scan import scan_project
+
+    if fail_on not in (*SEVERITY_ORDER, "none"):
+        raise typer.BadParameter("--fail-on must be one of high, medium, low, info, none")
+    result = scan_project(path, PriceBook.load(pricing if pricing else path))
+    if write_baseline:
+        save_baseline(result, write_baseline)
+        typer.echo(f"Baseline with {len(result.findings)} findings written to {write_baseline}. Commit it.")
+        return
+    try:
+        known = read_baseline(baseline) if baseline else None
+    except (OSError, ValueError, KeyError) as e:
+        typer.echo(f"Can't read baseline: {e}", err=True)
+        raise typer.Exit(2) from None
+    res = run_check(result, known)
+    failing = res.failing(fail_on)
+    if as_json:
+        typer.echo(json.dumps(res.as_dict(fail_on), indent=2, sort_keys=True))
+    else:
+        label = "new" if baseline else "found (no baseline)"
+        typer.echo(f"harnessdoc check: {len(res.new)} {label} · {len(res.unchanged)} unchanged · "
+                   f"{len(res.fixed)} fixed since baseline")
+        for f in res.new:
+            mark = "✗" if f in failing else "·"
+            typer.echo(f"  {mark} {f.severity.upper():<6} {f.rule}  {f.file}:{f.line}  {f.title}")
+        for fp in res.fixed:
+            typer.echo(f"  ✓ fixed  {fp}")
+        if failing:
+            typer.echo(f"\nFailing: {len(failing)} new finding(s) at or above '{fail_on}'. Fix them, or if they are "
+                       "accepted, refresh the baseline with --write-baseline.")
+    if failing:
+        raise typer.Exit(1)
+
+
+guard_app = typer.Typer(help="Guard evals: small tests that must keep passing when a call gets cheaper.",
+                        no_args_is_help=True)
+app.add_typer(guard_app, name="guard")
+
+
+@guard_app.command("scaffold")
+def guard_scaffold(
+    site: str = typer.Argument(..., help="Call site id (file.py:line) or enclosing function name"),
+    path: Path = typer.Option(Path("."), "--project", exists=True, file_okay=False, help="Project root"),
+    tests_dir: str = typer.Option("tests/evals", help="Where to put the guard eval, relative to the project"),
+):
+    """Write a pytest guard eval + empty cases file for an LLM call site (never overwrites)."""
+    from .guard import GuardError, scaffold
+
+    try:
+        s = scaffold(path, site, tests_dir)
+    except GuardError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+    root = path.resolve()
+    if not s.created:
+        typer.echo(f"Guard eval for {s.site.id} already exists: {s.test_file.relative_to(root)}")
+        return
+    for f in s.created:
+        typer.echo(f"Created {f.relative_to(root)}")
+    typer.echo(f"Next: add 10–30 real cases to {s.cases_file.relative_to(root)}; the call site counts as "
+               "covered once it has at least one.")
 
 
 @app.command()

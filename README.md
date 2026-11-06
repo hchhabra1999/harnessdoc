@@ -12,8 +12,9 @@ re-measures after you change something, so the saving is proven, not claimed.
 - **No LLM calls of its own:** use it as a CLI, in CI, as an MCP server (Claude Code, Cursor, Codex…) or as a
   Claude Code skill — your agent does the reasoning; harnessdoc does the measuring.
 
-> Status: pre-alpha, week 6 of 10. What works today: the static scanner, the usage analyzer, the
-> Markdown report, the MCP server and the Claude Code skill. See the [PRD](docs/PRD.md) for the plan.
+> Status: pre-alpha, week 8 of 10. What works today: the static scanner, the usage analyzer, the
+> Markdown report, before/after comparison, guard-eval scaffolds, the CI gate, the MCP server and the
+> Claude Code skill. See the [PRD](docs/PRD.md) for the plan.
 
 ## Use it from your coding agent
 
@@ -39,10 +40,57 @@ cp -r skills/harnessdoc ~/.claude/skills/            # then type /harnessdoc in 
 | `explain_rule` | Why a rule matters, how to fix it, how its saving is estimated | no |
 | `read_goals` / `write_goals` | The project's `harnessdoc.goals.yaml` | `write_goals` only |
 | `write_report` | `harnessdoc-report.md` in the project | yes |
+| `scaffold_guard` | Guard eval (pytest + cases file) for an uncovered call site; never overwrites | yes |
+| `compare` | Before/after verdict: SHIP / REJECT / INCONCLUSIVE / NO CLEAR SAVING | no |
+| `check` | What the CI gate would say: new vs fixed findings against the baseline | no |
 
 Paths are confined to the project directory you pass. The [skill](skills/harnessdoc/SKILL.md) adds the
 workflow and its rules: quote only harnessdoc's numbers, label estimates, write a guard eval before
 changing an unguarded call, and apply one approved change at a time.
+
+## Prove the saving
+
+```bash
+harnessdoc guard scaffold extract_order_id          # guard eval for a call site that has none
+harnessdoc compare --before logs/week44.jsonl --after logs/week45.jsonl
+```
+
+`compare` answers one question — *is each successful task cheaper now, without hurting quality?* — and is
+built to say "not sure yet" when that's the truth:
+
+- **Cost:** cost per successful task before vs after, with a 95% CI on the change (independent windows,
+  delta method). LOWER only if the whole interval is below zero.
+- **Quality:** a non-inferiority test on success rate (Newcombe score interval) against the allowed drop in
+  `harnessdoc.goals.yaml`. PASS only if even the worst case stays within it.
+- **Verdict:** SHIP (cheaper and quality held), REJECT (quality fell beyond the bar, or cost rose),
+  INCONCLUSIVE (with how many tasks per window would settle it), or NO CLEAR SAVING.
+
+On the demo app, applying the top recommendations gives:
+
+```
+Verdict: INCONCLUSIVE   (quality INCONCLUSIVE vs allowed −1 pt · cost LOWER)
+  Cost per successful task   $0.0366 → $0.0214  (−41.6%, 95% CI of the change −$0.0188 to −$0.0117)
+  Spend / 30 days            $107.94 → $41.23   · cache hit rate 0% → 41.7%
+  Success rate +0.8 pt, but the CI (−3.7 to +5.3) still allows a drop beyond −1 pt.
+  About 3,060 tasks per window would settle it.
+```
+
+The saving is real; whether quality held within one point isn't knowable from a week of 480 tickets — so it
+doesn't claim it. With a 5-point bar the same data says SHIP.
+
+Guard evals count toward coverage only once their cases file has at least one case, and a test covers an
+LLM call when it calls any function that leads to it (handler → helper → LLM wrapper).
+
+## CI gate
+
+```bash
+harnessdoc check . --write-baseline harnessdoc-baseline.json   # once: today's findings become accepted debt
+harnessdoc check . --baseline harnessdoc-baseline.json --fail-on medium   # every PR
+```
+
+Findings are matched by rule + file + enclosing function, not line number, so unrelated edits don't make
+old findings look new; fixed findings are listed. A ready-made GitHub Actions workflow that also uploads the
+report is in [`examples/ci/harnessdoc.yml`](examples/ci/harnessdoc.yml).
 
 ## Goals and the report
 
@@ -160,7 +208,7 @@ is how the scanner's recall and false-positive rate are measured.
 | 2–3 | Python scanner: LLM call sites, checks HD001–HD010, eval coverage, CI exit codes ✅ |
 | 4–5 | Usage analyzer → baseline cost per successful task, findings priced in measured $/month ✅ |
 | 6 | MCP server + Claude Code skill, goals interview, report ✅ |
-| 7–8 | Eval-coverage map, guard evals, before/after with confidence intervals, CI gate |
+| 7–8 | Eval-coverage map, guard evals, before/after with confidence intervals, CI gate ✅ |
 | 9 | Experiment runner (your key): replay samples on cheaper settings |
 | 10 | Claude Code session logs, open-source case study, PyPI release |
 

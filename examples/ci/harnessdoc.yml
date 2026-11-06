@@ -1,0 +1,37 @@
+# harnessdoc CI gate — copy to .github/workflows/harnessdoc.yml in your project.
+#
+# One-time setup in your repo:
+#   pip install harnessdoc
+#   harnessdoc check . --write-baseline harnessdoc-baseline.json   # existing findings = accepted debt
+#   git add harnessdoc-baseline.json
+#
+# Every pull request then fails only on NEW harness waste at or above --fail-on, and gets the full
+# report as a downloadable artifact.
+name: harnessdoc
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  harnessdoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install harnessdoc
+        run: pip install harnessdoc   # before the PyPI release: pip install "git+https://github.com/<you>/harnessdoc"
+      - name: Fail on new harness waste
+        run: harnessdoc check . --baseline harnessdoc-baseline.json --fail-on medium
+      - name: Write the report
+        if: always()
+        run: harnessdoc report . --out harnessdoc-report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harnessdoc-report
+          path: harnessdoc-report.md

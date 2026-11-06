@@ -195,6 +195,21 @@ class ModuleAnalyzer:
             return provider
         return None
 
+    def call_graph(self) -> dict[str, set[str]]:
+        """function name -> names of functions it calls (last segment of each call), for every def in the
+        module including methods. Name-based: good enough to follow handler → helper → LLM wrapper."""
+        graph: dict[str, set[str]] = {}
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                callees = graph.setdefault(node.name, set())
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Call):
+                        name = dotted(sub.func)
+                        if name:
+                            callees.add(name.rsplit(".", 1)[-1].removesuffix("()"))
+                callees.discard(node.name)
+        return graph
+
     # ------------------------------------------------------------------ call sites
 
     def call_sites(self) -> list[CallSite]:

@@ -4,8 +4,8 @@
     claude mcp add harnessdoc -- harnessdoc mcp
 
 harnessdoc makes no LLM calls. The connected agent does the reasoning and the conversation; these tools
-return deterministic measurements. Read-only tools are annotated as such; only `write_goals` and
-`write_report` create files, and only inside the project directory they are given.
+return deterministic measurements. Read-only tools are annotated as such; only `write_goals`,
+`write_report` and `scaffold_guard` create files, and only inside the project directory they are given.
 """
 
 from __future__ import annotations
@@ -31,8 +31,9 @@ from .usage.analyze import baseline
 
 INSTRUCTIONS = """harnessdoc measures what each successful task of an AI app costs and where the harness wastes
 tokens. Workflow: read_goals (or interview the user and write_goals) → scan → measure (if usage logs exist) →
-write_report. Quote only numbers these tools return; savings are estimates until a before/after run measures
-them. Never change a call site's model or prompt while it has no guard eval (findings list `guard`)."""
+write_report → for each approved change: scaffold_guard if the call has no eval, apply, then compare
+before/after logs. Quote only numbers these tools return; savings are estimates until compare says SHIP.
+Never change a call site's model or prompt while it has no guard eval (findings list `guard`)."""
 
 server = MCPServer("harnessdoc", instructions=INSTRUCTIONS, version=__version__)
 READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
@@ -201,3 +202,66 @@ def write_report(project_path: str, out: str = "harnessdoc-report.md", logs: lis
         headline["combined_saving_month"] = combined_saving(a.measured)[1]
     return {"written": str(target.relative_to(root)), **headline,
             "goals_file": str(goals_path(root).relative_to(root)) if goals_path(root).exists() else None}
+
+
+@server.tool(annotations=READ_ONLY)
+def compare(project_path: str, before: list[str], after: list[str], max_success_rate_drop: float | None = None,
+            site: str | None = None) -> dict[str, Any]:
+    """Before/after verdict for a change: SHIP, REJECT, INCONCLUSIVE or NO CLEAR SAVING.
+
+    Compares cost per successful task (95% CI of the change) and tests quality for non-inferiority against
+    the allowed success-rate drop (points; default from the goals file, else 1). `before`/`after` are log
+    paths relative to the project. When INCONCLUSIVE, `tasks_needed_per_window` says how much data would
+    settle it — report that instead of declaring a winner.
+    """
+    from .compare import compare as run_compare
+
+    root = _root(project_path)
+    goals = _goals(root)
+    key = goals.task_key if goals else None
+    b = load_logs([_inside(root, p) for p in before], key)
+    a = load_logs([_inside(root, p) for p in after], key)
+    if not b.records or not a.records:
+        raise ToolError("no LLM usage found in the before or after logs")
+    drop = max_success_rate_drop if max_success_rate_drop is not None else (
+        goals.max_success_rate_drop if goals else 1.0)
+    c = run_compare((b.records, b.outcomes), (a.records, a.outcomes), PriceBook.load(root), drop, site)
+    return c.as_dict()
+
+
+@server.tool(annotations=READ_ONLY)
+def check(project_path: str, baseline: str = "harnessdoc-baseline.json", fail_on: str = "medium") -> dict:
+    """CI-style gate: which findings are new compared with the committed baseline, which were fixed, and
+    whether the gate would fail (new findings at or above `fail_on`)."""
+    from .check import check as run_check
+    from .check import read_baseline
+
+    if fail_on not in ("high", "medium", "low", "info", "none"):
+        raise ToolError("fail_on must be high, medium, low, info or none")
+    root = _root(project_path)
+    path = _inside(root, baseline)
+    known = None
+    if path.exists():
+        try:
+            known = read_baseline(path)
+        except (ValueError, KeyError) as e:
+            raise ToolError(f"can't read baseline: {e}") from None
+    res = run_check(scan_project(root, PriceBook.load(root)), known)
+    return res.as_dict(fail_on) | {"baseline_found": known is not None, "would_fail": bool(res.failing(fail_on))}
+
+
+@server.tool(annotations=WRITES)
+def scaffold_guard(project_path: str, site: str, tests_dir: str = "tests/evals") -> dict[str, Any]:
+    """Create a guard eval (pytest file + empty JSONL cases file) for an LLM call site that has none.
+    Never overwrites. Fill the cases file with 10–30 real inputs and expected outputs before changing the
+    call; until it has a case, the call site still counts as uncovered."""
+    from .guard import GuardError, scaffold
+
+    root = _root(project_path)
+    try:
+        s = scaffold(root, site, tests_dir)
+    except GuardError as e:
+        raise ToolError(str(e)) from None
+    return {"call_site": s.site.id, "test_file": str(s.test_file.relative_to(root)),
+            "cases_file": str(s.cases_file.relative_to(root)),
+            "created": [str(p.relative_to(root)) for p in s.created]}
