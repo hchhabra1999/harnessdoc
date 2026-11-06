@@ -26,6 +26,10 @@ dev = ["pytest>=8", "ruff>=0.5"]
 [project.scripts]
 harnessdoc = "harnessdoc.cli:app"
 
+[project.urls]
+Homepage = "https://github.com/hchhabra1999/harnessdoc"
+Issues = "https://github.com/hchhabra1999/harnessdoc/issues"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/harnessdoc"]
 
