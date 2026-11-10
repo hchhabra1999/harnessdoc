@@ -13,6 +13,7 @@ from .goals import Goals, load_goals
 from .measure import MeasuredFinding, combined_saving, measure_findings
 from .pricing import PriceBook, fmt_usd
 from .scan import ScanResult, scan_project
+from .scan.pyast import is_non_product_path
 from .usage import load_logs, load_outcomes_file
 from .usage.analyze import Baseline, baseline
 
@@ -190,7 +191,7 @@ def build_report(a: Analysis) -> str:
             w("")
 
     # ------------------------------------------------------------------ guard first
-    uncovered = [s for s in sites if not a.scan.coverage.get(s.id)]
+    uncovered = [s for s in sites if not a.scan.coverage.get(s.id) and not is_non_product_path(s.file)]
     w("## Before changing anything: eval coverage\n")
     if uncovered:
         w(f"{len(uncovered)} of {len(sites)} LLM call sites have no eval, so a change to them can't be shown to "

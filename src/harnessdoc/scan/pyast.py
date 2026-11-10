@@ -60,6 +60,16 @@ MAX_TOKEN_KWARGS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
 TEST_DIR_NAMES = {"tests", "test", "evals", "eval"}
 
 
+NON_PRODUCT_DIRS = {"scripts", "script", "benchmarks", "benchmark", "bench", "examples", "example", "docs",
+                    "notebooks"}
+
+
+def is_non_product_path(rel: str) -> bool:
+    """One-off scripts, benchmarks, examples and notebooks: LLM calls there aren't the app's runtime spend,
+    so "no eval covers this" (HD010) is noise. Other checks still run on them."""
+    return any(part.lower() in NON_PRODUCT_DIRS for part in Path(rel).parts[:-1])
+
+
 def is_test_path(rel: str) -> bool:
     p = Path(rel)
     return (

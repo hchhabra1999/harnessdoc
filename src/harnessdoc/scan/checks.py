@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 from ..pricing import PriceBook, UnknownModel
 from .model import CallSite, Finding
+from .pyast import is_non_product_path
 
 PREMIUM_INPUT_PRICE = 4.0  # USD / 1M input tokens and above = "premium tier" for this check
 
@@ -261,7 +262,7 @@ CHECKS: list[Callable[[CallSite, PriceBook], list[Finding]]] = [
 def coverage_findings(sites: list[CallSite], coverage: dict[str, list[str]]) -> list[Finding]:
     out = []
     for s in sites:
-        if s.is_test_file or coverage.get(s.id):
+        if s.is_test_file or coverage.get(s.id) or is_non_product_path(s.file):
             continue
         out.append(Finding(
             rule="HD010", title="No eval covers this LLM call",

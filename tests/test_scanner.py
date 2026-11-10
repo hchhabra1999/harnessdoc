@@ -363,3 +363,23 @@ def test_injected_client_guard_still_rejects_look_alikes(tmp_path):
             return db.chat.completions.create(model=model)  # receiver doesn't look like a client
     """})
     assert scan_project(root).call_sites == []
+
+
+# ----------------------------------------------------------------------------- non-product code
+
+
+def test_hd010_skips_scripts_and_benchmarks_but_other_rules_still_run(tmp_path):
+    call = """
+        import anthropic
+        client = anthropic.Anthropic()
+
+        def classify(m):
+            return client.messages.create(model="claude-opus-5-5", max_tokens=9000,
+                messages=[{"role": "user", "content": f"Classify this message. Reply with the label only: {m}"}])
+    """
+    root = project(tmp_path, {"app/router.py": call, "scripts/bench.py": call, "benchmarks/run.py": call})
+    findings = scan_project(root).findings
+    hd010 = sorted(f.file for f in findings if f.rule == "HD010")
+    assert hd010 == ["app/router.py"]  # scripts/ and benchmarks/ are not product code
+    assert {f.file for f in findings if f.rule == "HD006"} == {"app/router.py", "scripts/bench.py",
+                                                               "benchmarks/run.py"}  # cost rules still apply
