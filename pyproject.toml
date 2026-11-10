@@ -34,7 +34,8 @@ Issues = "https://github.com/hchhabra1999/harnessdoc/issues"
 packages = ["src/harnessdoc"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/harnessdoc", "tests", "docs", "examples", "skills", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src/harnessdoc", "tests", "docs", "examples", "skills", "scripts", ".github",
+           "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "RELEASING.md", "pyproject.toml"]
 exclude = [
   "examples/demo_app/logs/usage*.jsonl",  # generated demo logs
   "**/harnessdoc-experiment-*.json",       # local experiment results

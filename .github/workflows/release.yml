@@ -1,0 +1,74 @@
+name: release
+
+# Push a tag like v0.2.0 (after the version bump PR is merged) and this runs:
+#   check tag/version/changelog -> test -> build -> [manual approval] -> publish to PyPI -> GitHub release
+# Full steps: RELEASING.md. PyPI uploads are permanent, so the publish job waits for you to approve it in
+# GitHub (Actions -> the run -> "Review deployments") and uses Trusted Publishing: no PyPI token is stored anywhere.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the code and the changelog
+        run: python scripts/check_release.py "$GITHUB_REF_NAME"
+      - name: Install
+        run: pip install -e ".[dev]" build twine
+      - name: Lint
+        run: ruff check src tests scripts examples/demo_app/logs
+      - name: Tests
+        run: pytest -q
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Check package metadata
+        run: twine check dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi          # protected: requires the owner's approval before this job runs
+      url: https://pypi.org/project/harnessdoc/
+    permissions:
+      id-token: write     # Trusted Publishing (OIDC) — replaces a stored PyPI token
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub release (notes = this version's CHANGELOG section)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_release.py "$GITHUB_REF_NAME" --notes > notes.md
+          prerelease=""
+          if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then prerelease="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" dist/* --title "harnessdoc ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md --verify-tag $prerelease

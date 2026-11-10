@@ -23,7 +23,7 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint
-        run: ruff check src tests examples/demo_app/logs
+        run: ruff check src tests scripts examples/demo_app/logs
       - name: Tests
         run: pytest -q
       - name: MCP over stdio
