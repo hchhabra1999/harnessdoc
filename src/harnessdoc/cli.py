@@ -669,5 +669,35 @@ def mcp():
     server.run("stdio")
 
 
+skill_app = typer.Typer(help="The /harnessdoc skill for Claude Code (ships inside this package).",
+                        no_args_is_help=True)
+app.add_typer(skill_app, name="skill")
+
+
+@skill_app.command("install")
+def skill_install(
+    directory: Path = typer.Option(Path.home() / ".claude" / "skills", "--dir",
+                                   help="Skills folder (default: ~/.claude/skills)"),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing, different harnessdoc skill"),
+):
+    """Copy the /harnessdoc skill into Claude Code's skills folder, then type /harnessdoc in Claude Code."""
+    from importlib import resources
+
+    text = resources.files("harnessdoc").joinpath("skill/SKILL.md").read_text(encoding="utf-8")
+    target = directory.expanduser() / "harnessdoc" / "SKILL.md"
+    if target.exists():
+        if target.read_text(encoding="utf-8") == text:
+            typer.echo(f"Already installed and up to date: {target}")
+            return
+        if not force:
+            typer.echo(f"{target} exists and differs from this version. Re-run with --force to replace it.",
+                       err=True)
+            raise typer.Exit(1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    typer.echo(f"Installed {target}")
+    typer.echo("Next: `claude mcp add harnessdoc -- harnessdoc mcp`, then type /harnessdoc in Claude Code.")
+
+
 if __name__ == "__main__":
     app()

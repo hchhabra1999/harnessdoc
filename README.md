@@ -12,9 +12,9 @@ re-measures after you change something, so the saving is proven, not claimed.
 - **No LLM calls of its own:** use it as a CLI, in CI, as an MCP server (Claude Code, Cursor, Codex…) or as a
   Claude Code skill — your agent does the reasoning; harnessdoc does the measuring.
 
-> Status: pre-alpha, week 9 of 10. What works today: the static scanner, the usage analyzer, the
-> Markdown report, before/after comparison, guard-eval scaffolds, the CI gate, the experiment runner, the
-> MCP server and the Claude Code skill. See the [PRD](docs/PRD.md) for the plan.
+> **Status: v0.1.0, alpha.** Everything below works and is tested (180 tests, CI on Python 3.10–3.13), but
+> it has been proven on a demo app we wrote and on scanner precision for two open-source apps — **not yet on
+> measured savings in a real app** (see [limits](#known-limits) and the [case study](docs/case-study.md)).
 
 ## Use it from your coding agent
 
@@ -22,11 +22,11 @@ harnessdoc ships an MCP server and a Claude Code skill. The agent interviews you
 then calls harnessdoc for every number — harnessdoc itself never calls an LLM.
 
 ```bash
-pip install "harnessdoc[mcp]"                       # (from a clone for now: uv pip install -e ".[mcp]")
+pip install "harnessdoc[mcp]"
 
 # Claude Code
 claude mcp add harnessdoc -- harnessdoc mcp
-cp -r skills/harnessdoc ~/.claude/skills/            # then type /harnessdoc in Claude Code
+harnessdoc skill install                             # then type /harnessdoc in Claude Code
 
 # Cursor / other MCP clients: add to mcp.json
 #   {"mcpServers": {"harnessdoc": {"command": "harnessdoc", "args": ["mcp"]}}}
@@ -272,17 +272,33 @@ in your repo root (deep-merged over the defaults).
 a regex's job, a real-time API for a nightly batch, uncovered call sites…). The [answer key](examples/demo_app/WASTE.md)
 is how the scanner's recall and false-positive rate are measured.
 
-## Roadmap
+## Known limits
 
-| Week | Ships |
+- **Python only.** TypeScript/JS apps aren't scanned, and neither are calls made through frameworks such as
+  LangChain (the scanner follows the Anthropic, OpenAI, Gemini and LiteLLM SDKs directly).
+- **Models set at runtime are invisible to the static scanner.** On two real open-source apps only 4 of 136 call
+  sites had a statically readable model, so cost rules like HD006 couldn't fire there. Usage logs (where the model
+  is recorded per request) cover this gap — that's why `measure` and `compare` exist.
+- **Savings are estimates until `compare` says SHIP**, and `compare` says INCONCLUSIVE when the data can't
+  support a verdict (small samples) instead of declaring a winner.
+- **No measured saving on a real app yet.** The target of ≥25% lower cost per successful task on an open-source
+  app needs one with real traffic logs; the demo-app numbers are synthetic.
+- **`harnessdoc sessions` dollars are API-equivalent** list prices; a subscription plan isn't billed per token.
+- **Prices change.** The price book is dated and each entry has its source; override per project with
+  `harnessdoc.pricing.json`.
+
+## Roadmap (what v0.1.0 contains)
+
+| Area | Status |
 |---|---|
-| 1 | Price book + cost engine (3 providers), demo app + answer key ✅ |
-| 2–3 | Python scanner: LLM call sites, checks HD001–HD010, eval coverage, CI exit codes ✅ |
-| 4–5 | Usage analyzer → baseline cost per successful task, findings priced in measured $/month ✅ |
-| 6 | MCP server + Claude Code skill, goals interview, report ✅ |
-| 7–8 | Eval-coverage map, guard evals, before/after with confidence intervals, CI gate ✅ |
-| 9 | Experiment runner (your key): replay samples on cheaper settings ✅ |
-| 10 | Claude Code session logs, open-source case study, PyPI release |
+| Price book + cost engine (Anthropic, OpenAI, Gemini, MiniMax) | ✅ |
+| Python scanner, checks HD001–HD010, eval coverage, CI exit codes | ✅ |
+| Usage analyzer: cost per successful task, findings priced in measured $/month | ✅ |
+| MCP server (12 tools) + `/harnessdoc` skill + goals file + Markdown report | ✅ |
+| `compare` (SHIP / REJECT / INCONCLUSIVE), guard-eval scaffolds, CI gate | ✅ |
+| Experiment runner with a hard budget, tested on a real API | ✅ |
+| Claude Code session-log analysis (`sessions`) | ✅ |
+| Real-app measured saving, TypeScript scanning, resolving models from config | next |
 
 ## Licence
 

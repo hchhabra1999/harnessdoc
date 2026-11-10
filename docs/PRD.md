@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Owner | Harsh Chhabra |
-| Status | v0.1 in build (week 1 of 10) |
-| Updated | 2026-11-06 |
+| Status | v0.1.0 alpha — all planned weeks built; real-app measured saving still open (see README "Known limits") |
+| Updated | 2026-11-10 |
 
 ## What it is (one paragraph)
 
