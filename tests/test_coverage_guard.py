@@ -116,3 +116,71 @@ def test_guard_cli(tmp_path):
     assert "Created tests/evals/test_extract_order_id_guard.py" in r.output
     assert "already exists" in runner.invoke(app, ["guard", "scaffold", "acme_support/extract.py:9",
                                                    "--project", str(tmp_path / "d")]).output
+
+
+# ----------------------------------------------------------------------------- ambiguous names (found on gptme)
+
+TWO_BACKENDS = {
+    "pkg/__init__.py": "",
+    "pkg/llm_a.py": """
+        import anthropic
+        client = anthropic.Anthropic()
+
+        def chat(msgs):
+            return client.messages.create(model="claude-haiku-5-5", max_tokens=10, messages=msgs)
+    """,
+    "pkg/llm_b.py": """
+        import anthropic
+        client = anthropic.Anthropic()
+
+        def chat(msgs):
+            return client.messages.create(model="claude-haiku-5-5", max_tokens=10, messages=msgs)
+    """,
+}
+
+
+def test_ambiguous_function_names_need_the_module_too(tmp_path):
+    # `chat` exists in two modules. A test that only says `chat(...)` must not cover both of them.
+    root = make_files(tmp_path, {**TWO_BACKENDS, "tests/test_a.py": "from pkg.llm_a import chat\n"
+                                                                   "def test_a():\n    chat([])\n"})
+    r = scan_project(root)
+    by_file = {s.file: r.coverage[s.id] for s in r.call_sites}
+    assert by_file["pkg/llm_a.py"] == ["tests/test_a.py"]  # mentions `chat` and `llm_a`
+    assert by_file["pkg/llm_b.py"] == []  # shares the name only
+
+
+def test_unique_names_still_reach_through_callers(tmp_path):
+    root = make_files(tmp_path, {
+        "app/__init__.py": "",
+        "app/bot.py": "import anthropic\nclient = anthropic.Anthropic()\n\n"
+                      "def ask(q):\n    return client.messages.create(model='claude-haiku-5-5', max_tokens=9, messages=q)\n"
+                      "\ndef handle(t):\n    return ask(t)\n",
+        "tests/test_bot.py": "from app.bot import handle\ndef test_h():\n    handle([])\n",
+    })
+    r = scan_project(root)
+    assert [r.coverage[s.id] for s in r.call_sites] == [["tests/test_bot.py"]]
+
+
+def test_coverage_scales_to_many_functions_and_tests(tmp_path):
+    # Regression: coverage ran one regex per function per test file (minutes on a 1,100-file repo).
+    import time
+
+    files = {"big/__init__.py": ""}
+    for i in range(300):
+        files[f"big/m{i}.py"] = "\n".join(f"def f{i}_{j}(x):\n    return g{i}_{j}(x)\n" for j in range(20))
+    for i in range(300):
+        files[f"tests/test_m{i}.py"] = "\n".join(f"def test_{j}():\n    assert f{i}_{j}(1)\n" for j in range(20))
+    files["big/llm.py"] = ("import anthropic\nclient = anthropic.Anthropic()\n\n"
+                           "def ask(q):\n    return client.messages.create(model='claude-haiku-5-5', max_tokens=9, messages=q)\n")
+    root = make_files(tmp_path, files)
+    start = time.perf_counter()
+    scan_project(root)
+    assert time.perf_counter() - start < 20
+
+
+def make_files(tmp_path: Path, files: dict[str, str]) -> Path:
+    for rel, src in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(src))
+    return tmp_path

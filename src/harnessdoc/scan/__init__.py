@@ -42,14 +42,25 @@ def _empty_guard_scaffold(root: Path, test_file: str, text: str) -> bool:
 
 
 def eval_coverage(root: Path, sites: list[CallSite], files: list[str],
-                  call_graph: dict[str, set[str]] | None = None) -> dict[str, list[str]]:
+                  call_graph: dict[str, set[str]] | None = None,
+                  def_counts: dict[str, int] | None = None) -> dict[str, list[str]]:
     """Map each call site to the test/eval files that exercise it.
 
     A test covers a call site when it references the call's enclosing function, or any project function
     that (transitively) calls it — tests usually drive the top-level handler, not the LLM wrapper.
-    Matching is by function name, so two same-named functions can over-report coverage.
+
+    Matching is by function name, so it is deliberately conservative about *ambiguous* names (defined more
+    than once in the project, like `chat` or `run`): reachability only follows names defined exactly once,
+    and a call site inside an ambiguous function counts as covered only if the test also mentions the module
+    it lives in. Without this, one test mentioning `chat` "covers" every `chat` in the repo (measured: a
+    1,100-file repo showed 300–700 covering tests per call site) and HD010 would never fire.
     """
-    graph = call_graph or {}
+    counts = def_counts or {}
+
+    def unique(name: str) -> bool:
+        return counts.get(name, 1) <= 1
+
+    graph = {fn: {c for c in callees if unique(c)} for fn, callees in (call_graph or {}).items() if unique(fn)}
     tests = {}
     for f in files:
         if f.endswith(".py") and is_test_path(f):
@@ -60,10 +71,14 @@ def eval_coverage(root: Path, sites: list[CallSite], files: list[str],
             if not _empty_guard_scaffold(root, f, text):
                 tests[f] = text
 
+    # Identifiers per test file, computed once: membership in this set is what `\bname\b` matched, without
+    # running one regex per project function per test file (quadratic — minutes on a 1,000-file repo).
+    idents = {f: set(re.findall(r"[A-Za-z_]\w*", text)) for f, text in tests.items()}
+
     # which project functions does each test reach?
     reach: dict[str, set[str]] = {}
-    for f, text in tests.items():
-        frontier = {name for name in graph if re.search(rf"\b{re.escape(name)}\b", text)}
+    for f in tests:
+        frontier = graph.keys() & idents[f]
         seen = set(frontier)
         while frontier:
             nxt = {c for n in frontier for c in graph.get(n, ()) if c not in seen}
@@ -78,8 +93,11 @@ def eval_coverage(root: Path, sites: list[CallSite], files: list[str],
         if not s.function:
             cov[s.id] = []
             continue
-        rx = re.compile(rf"\b{re.escape(s.function)}\b")
-        cov[s.id] = sorted(f for f, text in tests.items() if s.function in reach.get(f, ()) or rx.search(text))
+        stem = Path(s.file).stem
+        if unique(s.function):
+            cov[s.id] = sorted(f for f in tests if s.function in reach.get(f, ()) or s.function in idents[f])
+        else:
+            cov[s.id] = sorted(f for f in tests if s.function in idents[f] and stem in idents[f])
     return cov
 
 
@@ -104,11 +122,14 @@ def scan_project(root: str | Path, book: PriceBook | None = None) -> ScanResult:
     sites = [s for m in modules for s in m.call_sites()]
     sites.sort(key=lambda s: (s.file, s.line))
     graph: dict[str, set[str]] = {}
+    def_counts: dict[str, int] = {}
     for m in modules:
         if not is_test_path(m.rel):
             for fn, callees in m.call_graph().items():
                 graph.setdefault(fn, set()).update(callees)
-    coverage = eval_coverage(root, sites, files, graph)
+            for name in m.defined_names():
+                def_counts[name] = def_counts.get(name, 0) + 1
+    coverage = eval_coverage(root, sites, files, graph, def_counts)
 
     findings: list[Finding] = []
     for s in sites:

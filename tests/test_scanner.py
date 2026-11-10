@@ -326,3 +326,40 @@ def test_json_output_is_deterministic():
     b = runner.invoke(app, ["scan", str(demo), "--json"])
     assert a.exit_code == 0 and a.output == b.output
     assert json.loads(a.output)["findings"]
+
+
+# ----------------------------------------------------------------------------- injected clients
+# Found by running the scanner on a real repo (optillm): modules that take `client` as a parameter and
+# import no SDK were invisible, so recall was ~30%.
+
+
+def test_injected_client_without_sdk_import_is_detected(tmp_path):
+    root = project(tmp_path, {"approach.py": """
+        import logging
+
+        def run(system_prompt, query, client, model):
+            return client.chat.completions.create(model=model, messages=[{"role": "user", "content": query}])
+
+        def run_responses(llm_client, model):
+            return llm_client.responses.create(model=model, input="x")
+
+        def run_anthropic(client, model):
+            return client.messages.create(model=model, max_tokens=100, messages=[])
+    """})
+    sites = scan_project(root).call_sites
+    assert sorted((s.function, s.provider) for s in sites) == [
+        ("run", "openai"), ("run_anthropic", "anthropic"), ("run_responses", "openai")]
+
+
+def test_injected_client_guard_still_rejects_look_alikes(tmp_path):
+    root = project(tmp_path, {"notify.py": """
+        def sms(client, to):
+            return client.messages.create(to=to, body="hi")  # Twilio: no model / max_tokens
+
+        def slack(client):
+            return client.messages.create(channel="#x", text="hi", max_tokens=1)  # no model
+
+        def not_a_client(db, model):
+            return db.chat.completions.create(model=model)  # receiver doesn't look like a client
+    """})
+    assert scan_project(root).call_sites == []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from .model import CallSite, Resolved
@@ -42,6 +43,14 @@ API_PATTERNS: list[tuple[tuple[str, ...], str, bool]] = [
     (("generate_content",), "gemini", False),
 ]
 LITELLM_FUNCS = {"completion", "acompletion", "batch_completion"}
+
+# Call shapes that only LLM SDKs have; enough on their own when the client is injected rather than imported.
+DISTINCTIVE_SUFFIXES = {
+    ("chat", "completions", "create"), ("chat", "completions", "parse"), ("chat", "completions", "stream"),
+    ("responses", "create"), ("responses", "parse"), ("responses", "stream"),
+    ("models", "generate_content"), ("models", "generate_content_stream"), ("generate_content",),
+}
+CLIENT_NAME = re.compile(r"client|openai|anthropic|llm|oai|genai|provider|\bapi\b", re.IGNORECASE)
 
 VOLATILE_CALLS = (
     "datetime.now", "datetime.utcnow", "datetime.today", "date.today", "time.time", "time.time_ns",
@@ -195,6 +204,10 @@ class ModuleAnalyzer:
             return provider
         return None
 
+    def defined_names(self) -> list[str]:
+        """Every function/method name defined in the module, once per definition."""
+        return [n.name for n in ast.walk(self.tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+
     def call_graph(self) -> dict[str, set[str]]:
         """function name -> names of functions it calls (last segment of each call), for every def in the
         module including methods. Name-based: good enough to follow handler → helper → LLM wrapper."""
@@ -213,9 +226,7 @@ class ModuleAnalyzer:
     # ------------------------------------------------------------------ call sites
 
     def call_sites(self) -> list[CallSite]:
-        sdks = self.imported_sdks
-        if not sdks:
-            return []
+        sdks = self.imported_sdks  # may be empty: the client can be passed in from another module
         sites = []
         for node in ast.walk(self.tree):
             if isinstance(node, ast.Call):
@@ -242,10 +253,27 @@ class ModuleAnalyzer:
                 provider = self._receiver_provider(receiver) or (
                     default_provider if default_provider in sdks else None
                 )
+                if provider is None and self._injected_client(suffix, receiver, call):
+                    provider = default_provider
                 if provider is None:
                     return None
                 return self._build(call, provider, ".".join(suffix), batch=is_batch)
         return None
+
+    def _injected_client(self, suffix: tuple[str, ...], receiver: str, call: ast.Call) -> bool:
+        """A call on a client that was passed in (no SDK import in this module).
+
+        Only call shapes that are unique to LLM APIs qualify, and the receiver must look like a client. The
+        generic `messages.create` (Twilio, Slack…) also needs both `model` and `max_tokens` arguments.
+        """
+        if not receiver or not CLIENT_NAME.search(receiver.rsplit(".", 1)[-1].removesuffix("()")):
+            return False
+        if suffix in DISTINCTIVE_SUFFIXES:
+            return True
+        if suffix[0] == "messages":
+            kws = {k.arg for k in call.keywords if k.arg}
+            return {"model", "max_tokens"} <= kws
+        return False
 
     def _receiver_provider(self, receiver: str) -> str | None:
         if receiver in self.clients:

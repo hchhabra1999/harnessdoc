@@ -181,8 +181,9 @@ Every finding names the eval that guards the affected code, or says there is non
 *estimates* until usage logs are joined (weeks 4–5).
 
 **Benchmark:** on the [deliberately wasteful demo app](examples/demo_app) the scanner finds 10/10 planted
-issues with 0 false positives (`tests/test_benchmark_demo.py`). That app was written by us, so the honest
-test of precision is real open-source apps — that's the week-10 case study.
+issues with 0 false positives (`tests/test_benchmark_demo.py`). That app was written by us, so we also ran it
+on two real open-source apps — it found every SDK call in both, and the [case study](docs/case-study.md)
+records the three bugs that exposed, what it can't see (models set at runtime), and what it didn't measure.
 
 ## Measure real usage
 
