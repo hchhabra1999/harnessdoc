@@ -480,6 +480,79 @@ def guard_scaffold(
                "covered once it has at least one.")
 
 
+@app.command()
+def sessions(
+    directory: Path = typer.Option(None, "--dir", help="Claude Code logs folder (default: ~/.claude/projects)"),
+    since: str | None = typer.Option(None, help="Only from this date (2026-11-01) or last N days (7d)"),
+    until: str | None = typer.Option(None, help="Only before this date (2026-11-08)"),
+    cwd: str | None = typer.Option(None, help="Only sessions run under this directory"),
+    top: int = typer.Option(8, help="How many of the costliest sessions to list"),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    pricing: Path | None = PricingOpt,
+):
+    """What your Claude Code usage costs at API list prices, and where the tokens go.
+
+    Reads only token counts, models, timestamps and session ids from the session logs — never your prompts,
+    replies or tool output. Dollars are API-equivalent: a subscription plan doesn't bill per token.
+    """
+    from .sessions import DEFAULT_ROOT, analyse, parse_since
+
+    root = (directory or DEFAULT_ROOT).expanduser()
+    if not root.exists():
+        typer.echo(f"No Claude Code logs at {root}. Pass --dir if they live elsewhere.", err=True)
+        raise typer.Exit(2)
+    try:
+        s_dt = parse_since(since) if since else None
+        u_dt = parse_since(until) if until else None
+    except ValueError:
+        typer.echo("--since/--until take a date like 2026-11-01, or a number of days like 7d.", err=True)
+        raise typer.Exit(2) from None
+    r = analyse(root, PriceBook.load(pricing), s_dt, u_dt, cwd, top)
+    if as_json:
+        typer.echo(json.dumps(r.as_dict(), indent=2, sort_keys=True, default=str))
+        return
+    _print_sessions(r)
+
+
+def _print_sessions(r) -> None:
+    if not r.messages:
+        typer.echo(f"No Claude Code usage found ({r.files} log files read).")
+        return
+    c = r.total.cost
+    span = f"{r.window[0]:%Y-%m-%d} → {r.window[1]:%Y-%m-%d}" if r.window else "unknown dates"
+    typer.echo(f"{r.messages:,} assistant messages · {span} · {r.files} log files ({r.subagent_files} subagent)")
+    typer.echo(f"API-equivalent cost at list prices: {_money(c.total)}   (a subscription plan is not billed this way)")
+    typer.echo(f"  de-duplicated {r.duplicate_records:,} repeated log records (each message is logged once per content block)")
+    if r.unreadable_lines:
+        typer.echo(f"  skipped {r.unreadable_lines:,} unreadable log lines")
+    typer.echo("\nWhere the money goes")
+    for label, v in (("cache reads", c.cache_read), ("output", c.output), ("cache writes, 1-hour", c.cache_write_1h),
+                     ("cache writes, 5-minute", c.cache_write_5m), ("uncached input", c.uncached_input)):
+        typer.echo(f"  {label:<24} {_money(v):>12}  {v / c.total:>5.0%}" if c.total else f"  {label}")
+    hit = r.total.cache_hit_rate
+    typer.echo(f"  cache hit rate (input tokens read from cache): {hit:.1%}" if hit is not None else "")
+    if r.subagent.messages:
+        typer.echo(f"  subagents: {r.subagent.messages:,} messages, {_money(r.subagent.cost.total)} "
+                   f"({r.subagent.cost.total / c.total:.0%} of cost)")
+
+    typer.echo("\nBy model")
+    for key, g in sorted(r.by_model.items(), key=lambda kv: -kv[1].cost.total):
+        typer.echo(f"  {key:<22} {g.messages:>7,} msgs  {_money(g.cost.total):>11}  {g.cost.total / c.total:>5.0%}")
+    days = sorted(r.by_day.items())[-7:]
+    typer.echo("\nLast days")
+    for day, g in days:
+        typer.echo(f"  {day}  {g.messages:>6,} msgs  {_money(g.cost.total):>10}")
+    typer.echo("\nCostliest sessions")
+    for s in r.sessions:
+        project = (s.project or "?").replace(str(Path.home()), "~")
+        sub = f" (subagents {_money(s.subagent_cost)})" if s.subagent_cost else ""
+        typer.echo(f"  {s.session[:8]}  {_money(s.cost):>10}{sub}  {s.messages:,} msgs  {', '.join(s.models)}  {project}")
+    if r.unpriced_models:
+        typer.echo(f"\n! Not priced (add to harnessdoc.pricing.json): {', '.join(r.unpriced_models)}")
+    if r.fast_unpriced:
+        typer.echo(f"! {r.fast_unpriced} fast-mode messages were priced at the standard rate (no fast-mode price on file).")
+
+
 experiment_app = typer.Typer(help="Replay guard-eval cases on alternative setups (uses your API key; costs money).",
                              no_args_is_help=True)
 app.add_typer(experiment_app, name="experiment")

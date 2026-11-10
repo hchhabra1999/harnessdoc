@@ -128,6 +128,30 @@ Flash costs half as much per token but always thinks, and those tokens bill as o
 regression a cost-only comparison would have missed. 24 cases is a small sample; one case's difference between
 the first two rows is noise.
 
+## What your coding agent costs (Claude Code logs)
+
+```bash
+harnessdoc sessions                          # every session under ~/.claude/projects
+harnessdoc sessions --since 14d --cwd ~/code/my-app --top 5
+```
+
+Claude Code writes every session — and every subagent — to JSONL logs. `sessions` reads **only token counts,
+model ids, timestamps and session ids (never your prompts, replies or tool output)** and prices them from the
+price book: where the money goes (cache reads, output, 1-hour vs 5-minute cache writes, uncached input), cache
+hit rate, cost by model and by day, subagents' share, and the costliest sessions.
+
+Three details of the log format that a naive reader gets wrong, all handled and tested:
+
+- **Each message is logged once per content block**, with the same usage every time. Summing records
+  over-counts; in the logs checked it inflated tokens by 1.8–2.95×. Records are de-duplicated by message id.
+- **Cache writes have a TTL split** and the 1-hour write costs 2× input (5-minute: 1.25×). Most writes were
+  1-hour, so the TTL is priced, not assumed.
+- **Subagents are separate files** (`<session>/subagents/agent-*.jsonl`); skipping them hides a large share of
+  the spend, so they are read and reported separately.
+
+Dollars are **API-equivalent at list prices** — a subscription plan doesn't bill per token — so treat the
+breakdowns (what dominates, which sessions, how much subagents) as the actionable part.
+
 ## CI gate
 
 ```bash
